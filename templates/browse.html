@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Browse Categories</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon-32x32.png">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #333333;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 20px;
+        }
+        .category {
+            text-align: center;
+        }
+        .category img {
+            width: 150px;
+            height: 150px;
+            object-fit: cover;
+            border-radius: 8px;
+        }
+        .category-name {
+            margin-top: 10px;
+            font-size: 16px;
+        }
+        .category-name a {
+            color: #E0E0E0;
+            text-decoration: none;
+        }
+        .category-name a:hover {
+            color: #FFFFFF;
+            text-decoration: underline;
+        }
+                a {
+    color: #E0E0E0; /* Light gray for better visibility on dark backgrounds */
+    text-decoration: none; /* Removes underline for a cleaner look */
+}
+
+a:hover {
+    color: #FFFFFF; /* Brighter white on hover for better interaction feedback */
+    text-decoration: underline; /* Adds underline on hover to indicate interactivity */
+}
+        
+    </style>
+</head>
+<body>
+    {% include 'nav.html' %}
+    <h1>Browse Categories</h1>
+    <div class="grid">
+        {% for category in categories %}
+        <div class="category">
+            <a href="{{ url_for('browse_details', category_id=category['id']) }}">
+                <img src="{{ category['icons'][0]['url'] if category['icons'] else 'https://via.placeholder.com/150' }}" alt="{{ category['name'] }}">
+                <div class="category-name">{{ category['name'] }}</div>
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+</body>
+</html>

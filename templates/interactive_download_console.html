@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Interactive Download Console</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon-32x32.png">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #333333;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+        }
+
+        #output {
+            width: 100%;
+            height: 400px;
+            background: black;
+            color: lime;
+            font-family: monospace;
+            padding: 10px;
+            overflow-y: scroll;
+            border: 2px solid #1DB954;
+            margin-bottom: 10px;
+        }
+
+        input {
+            width: calc(100% - 130px);
+            padding: 10px;
+            border-radius: 5px;
+            border: none;
+            font-size: 14px;
+        }
+
+        button {
+            padding: 10px;
+            border-radius: 5px;
+            border: none;
+            background-color: #1DB954;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+            margin-left: 5px;
+        }
+
+        button.control-button {
+            background-color: #666;
+        }
+
+        button#terminateButton {
+            background-color: #ff4d4d;
+        }
+
+        #control-buttons {
+            margin-top: 15px;
+        }
+    </style>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.0.0/ansi_up.min.js"></script>
+</head>
+
+<body>
+    {% include 'nav.html' %}
+    <h1>Interactive Download Console</h1>
+    <div id="output"></div>
+    <input type="text" id="userInput" placeholder="Enter input for command...">
+    <button onclick="sendInput()">Send</button>
+    <button id="terminateButton" onclick="terminateProcess()">Terminate Process</button>
+
+    <div id="control-buttons">
+        <button class="control-button" onclick="sendPredefinedInput('p')">Up</button>
+        <button class="control-button" onclick="sendPredefinedInput('n')">Down</button>
+        <button class="control-button" onclick="sendPredefinedInput('q')">Accept</button>
+    </div>
+
+    <!-- Pause/Resume button -->
+    <button id="pauseResumeButton" onclick="togglePauseResume()">Pause</button>
+
+    <script>
+        const ansi_up = new AnsiUp(); // Create an instance of AnsiUp
+        let isPaused = false; // Flag to track the pause state
+
+        // Function to toggle pause and resume functionality
+        function togglePauseResume() {
+            isPaused = !isPaused; // Toggle the pause state
+            const buttonText = isPaused ? 'Resume' : 'Pause'; // Update button text
+            document.getElementById('pauseResumeButton').textContent = buttonText;
+        }
+
+        // Polling the server for console output every 1 second
+        function getCommandOutput() {
+            if (isPaused) return; // If paused, don't fetch new output
+
+            const commandId = '{{ command_id }}'; // Use the command ID provided by the backend
+
+            $.ajax({
+                url: `/update_console_output/${commandId}`,
+                type: 'GET',
+                success: function(response) {
+                    if (response.error) {
+                        console.error('Error fetching command output:', response.error);
+                        $('#output').append(`<div class="error">${response.error}</div>`);
+                    } else {
+                        let outputDiv = $('#output');
+                        outputDiv.empty(); // Clear the old output
+
+                        // Convert ANSI codes to HTML using AnsiUp
+                        response.output.forEach(function(line) {
+                            let convertedLine = ansi_up.ansi_to_html(line);
+                            outputDiv.append(convertedLine + "<br>");
+                        });
+
+                        outputDiv.scrollTop(outputDiv[0].scrollHeight);
+
+                        // If the process has finished, disable further input
+                        if (response.status !== 'running') {
+                            disableInteractionButtons();
+                        }
+                    }
+                },
+                error: function() {
+                    console.error('Error fetching command output.');
+                }
+            });
+        }
+
+        // Function to disable all interaction buttons if the command is no longer running
+        function disableInteractionButtons() {
+            $('#userInput').prop('disabled', true);
+            $('button').prop('disabled', true);
+        }
+
+        // Function to send user input to the backend for the interactive command
+        function sendInput() {
+            const commandId = '{{ command_id }}';
+            let userInput = $('#userInput').val().trim();
+            if (!userInput) {
+                alert("Please enter some input before sending.");
+                return;
+            }
+
+            $('button').prop('disabled', true); // Disable the send button while sending
+
+            $.ajax({
+                url: `/send_console_input/${commandId}`,
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ input: userInput }),
+                complete: function() {
+                    $('button').prop('disabled', false); // Re-enable buttons regardless of success or failure
+                },
+                success: function() {
+                    $('#userInput').val(''); // Clear the input field after sending
+                },
+                error: function(error) {
+                    console.error('Error sending input:', error);
+                    alert('Error sending input, please try again.');
+                }
+            });
+        }
+
+        // Function to send predefined input (like keyboard shortcuts) to the backend
+        function sendPredefinedInput(inputValue) {
+            const commandId = '{{ command_id }}';
+
+            $('button').prop('disabled', true); // Disable buttons while sending
+
+            $.ajax({
+                url: `/send_console_input/${commandId}`,
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ input: inputValue }),
+                complete: function() {
+                    $('button').prop('disabled', false); // Re-enable buttons regardless of success or failure
+                },
+                success: function() {
+                    console.log('Predefined input sent:', inputValue);
+                },
+                error: function(error) {
+                    console.error('Error sending predefined input:', error);
+                    alert('Error sending predefined input, please try again.');
+                }
+            });
+        }
+
+        // Function to terminate the current process
+        function terminateProcess() {
+            const commandId = '{{ command_id }}';
+
+            $('button').prop('disabled', true); // Disable buttons while sending
+
+            $.ajax({
+                url: `/terminate_command/${commandId}`,
+                type: 'POST',
+                complete: function() {
+                    $('button').prop('disabled', false); // Re-enable buttons regardless of success or failure
+                },
+                success: function(response) {
+                    alert(response.message);
+                    disableInteractionButtons(); // Disable buttons after termination
+                },
+                error: function(error) {
+                    console.error('Error terminating process:', error);
+                    alert('Error terminating process, please try again.');
+                }
+            });
+        }
+
+        // Automatically start polling for console output when the page loads
+        $(document).ready(function() {
+            setInterval(getCommandOutput, 1000); // Poll every 1 second
+        });
+    </script>
+
+</body>
+
+</html>
+

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Create Artist</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon-32x32.png">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #333333;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 400px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #444;
+            border-radius: 10px;
+            text-align: center;
+        }
+        input[type="text"], select {
+            width: 100%;
+            padding: 10px;
+            margin-top: 10px;
+            margin-bottom: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #1DB954;
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #1aa34a;
+        }
+    </style>
+    <script>
+        function submitArtist() {
+            const artistName = document.getElementById("artist_name").value;
+            const genre = document.getElementById("genre").value;
+            
+            if (!genre) {
+                alert("Please select a genre.");
+                return;
+            }
+
+            // Send the form data using fetch
+            fetch('/submit_artist', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: `artist_name=${encodeURIComponent(artistName)}&genre=${encodeURIComponent(genre)}`
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(data.message);
+                    // Optionally, redirect or clear the form
+                    document.getElementById("artist_name").value = "";
+                    document.getElementById("genre").value = "";
+                } else {
+                    alert(data.error || "Error creating artist folder.");
+                }
+            })
+            .catch(error => {
+                console.error("Error:", error);
+                alert("Error submitting the form.");
+            });
+        }
+    </script>
+</head>
+<body>
+    {% include 'nav.html' %}
+    <div class="container">
+        <h1>Create Artist</h1>
+        <input type="text" id="artist_name" placeholder="Enter artist name" required>
+        
+        <!-- Genre dropdown -->
+        <select id="genre" required>
+            <option value="">Select Genre</option>
+            {% for genre in genres %}
+            <option value="{{ genre }}">{{ genre }}</option>
+            {% endfor %}
+        </select>
+        
+        <button onclick="submitArtist()">Create</button>
+    </div>
+</body>
+</html>
+

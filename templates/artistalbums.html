@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ artist['name'] }} - Albums</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon-32x32.png">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #333333;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+        }
+        .artist-header {
+            text-align: center;
+        }
+        .artist-header img {
+            width: 200px;
+            height: 200px;
+            object-fit: cover;
+            border-radius: 100px;
+        }
+        .album-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .album-item {
+            background-color: #444;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .album-item img {
+            width: 150px;
+            height: 150px;
+            object-fit: cover;
+            border-radius: 8px;
+        }
+        .album-title {
+            font-size: 16px;
+            margin-top: 10px;
+        }
+        button {
+            background-color: #1DB954;
+            border: none;
+            color: white;
+            padding: 5px 10px;
+            margin-top: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #1aa34a;
+        }
+        a {
+            color: #E0E0E0;
+            text-decoration: none;
+        }
+        a:hover {
+            color: #FFFFFF;
+            text-decoration: underline;
+        }
+        .related-artists-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .related-artist-item {
+            background-color: #444;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .related-artist-item img {
+            width: 150px;
+            height: 150px;
+            object-fit: cover;
+            border-radius: 8px;
+        }
+        .related-artist-name {
+            font-size: 16px;
+            margin-top: 10px;
+        }
+        .related-artist-subtitle {
+            font-size: 14px;
+            color: #aaaaaa;
+        }
+        h2 {
+            color: #E0E0E0;
+            text-align: center;
+            margin-top: 40px;
+        }
+    </style>
+
+    <script>
+    // Function to remove text in parentheses or square brackets
+    function cleanString(input) {
+        return input.replace(/\([^)]*\)/g, '').replace(/\[[^\]]*\]/g, '').trim();
+    }
+
+    // Function to download the entire artist and queue the request
+    function downloadArtist(artistName) {
+        artistName = cleanString(artistName); // Clean the artist name
+
+        const url = '/download_artist';
+        const data = { artistName: artistName };
+
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(json => {
+            if (json.status === 'success') {
+                // Notify the user that the artist download has been queued
+                alert(`Artist download has been added to the queue. Command ID: ${json.command_id}`);
+            } else {
+                alert(`Failed to initiate download: ${json.message}`);
+            }
+        })
+        .catch(error => {
+            console.error('Error downloading artist:', error);
+            alert('Error sending download request: ' + error.message);
+        });
+    }
+
+    // Function to download a specific album and queue the request
+    function downloadAlbum(button) {
+        let artistName = button.getAttribute('data-artist-name');
+        let albumName = button.getAttribute('data-album-name');
+        const totalTracks = button.getAttribute('data-total-tracks');
+
+        // Clean the artist and album names
+        artistName = cleanString(artistName);
+        albumName = cleanString(albumName);
+
+        const url = '/download_album';
+        const data = {
+            artistName: artistName,
+            albumName: albumName,
+            totalTracks: parseInt(totalTracks, 10)
+        };
+
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(json => {
+            if (json.status === 'success') {
+                // Notify the user that the album download has been queued
+                alert(`Album download has been added to the queue. Command ID: ${json.command_id}`);
+            } else {
+                alert(`Failed to initiate download: ${json.message}`);
+            }
+        })
+        .catch(error => {
+            console.error('Error downloading album:', error);
+            alert('Error sending download request: ' + error.message);
+        });
+    }
+
+    // Function to check in Jellyfin for the artist
+    function checkInJellyfin(artistName) {
+        artistName = cleanString(artistName); // Clean the artist name
+
+        window.location.href = `/jellyfin_check_artist?artist=${encodeURIComponent(artistName)}`;
+    }
+</script>
+
+</head>
+<body>
+    {% include 'nav.html' %}
+    <div class="artist-header">
+        <img src="{{ artist['images'][0]['url'] if artist['images'] else 'https://cdn.icon-icons.com/icons2/1504/PNG/512/unknown_103657.png' }}" alt="{{ artist['name'] }}">
+        <h1>{{ artist['name'] }} - Albums</h1>
+        <button onclick="downloadArtist('{{ artist['name'] | escape }}')">Queue Entire Artist Download</button>
+        <button onclick="checkInJellyfin('{{ artist['name'] | escape }}')">Check in Jellyfin</button>
+    </div>
+
+    {% for album_group, albums in albums.items() %}
+        {% if albums %}
+            <h2>{{ album_group.replace('_', ' ').title() }}</h2>
+            <div class="album-list">
+                {% for album in albums %}
+                    <div class="album-item">
+                        <a href="/albumtracks/{{ album['id'] }}">
+                            <img src="{{ album['images'][0]['url'] if album['images'] else 'https://cdn.icon-icons.com/icons2/1504/PNG/512/unknown_103657.png' }}" alt="{{ album['name'] }}">
+                            <div class="album-title">{{ album['name'] }} ({{ album['total_tracks'] }} tracks)</div>
+                        </a>
+                        <button 
+                            data-artist-name="{{ artist['name'] | escape }}" 
+                            data-album-name="{{ album['name'] | escape }}" 
+                            data-total-tracks="{{ album['total_tracks'] | int }}" 
+                            onclick="downloadAlbum(this);"
+                        >Queue Album Download</button>
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endfor %}
+
+    <h2>Related Artists</h2>
+    <div class="related-artists-list">
+        {% for artist in related_artists %}
+            <div class="related-artist-item">
+                <a href="/artist/{{ artist['id'] }}">
+                    <img src="{{ artist['images'][0]['url'] if artist['images'] else 'https://cdn.icon-icons.com/icons2/1504/PNG/512/unknown_103657.png' }}" alt="{{ artist['name'] }}">
+                    <div class="related-artist-name">{{ artist['name'] }}</div>
+                </a>
+                <div class="related-artist-subtitle">{{ artist['genres'] | join(', ') }}</div>
+            </div>
+        {% endfor %}
+    </div>
+</body>
+</html>
+

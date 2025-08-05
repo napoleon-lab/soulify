@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ artist['Name'] }} - Jellyfin Albums</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon-32x32.png">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #333333;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+        }
+        .artist-header {
+            text-align: center;
+        }
+        .artist-header img {
+            width: 200px;
+            height: 200px;
+            object-fit: cover;
+            border-radius: 100px;
+        }
+        .album-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .album-item {
+            background-color: #444;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .album-item img {
+            width: 150px;
+            height: 150px;
+            object-fit: cover;
+            border-radius: 8px;
+        }
+        .album-title {
+            font-size: 16px;
+            margin-top: 10px;
+        }
+        a {
+            color: #E0E0E0;
+            text-decoration: none;
+        }
+        a:hover {
+            color: #FFFFFF;
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="artist-header">
+        <h1>{{ artist['Name'] }} - Albums in Jellyfin</h1>
+    </div>
+
+    <div class="album-list" id="album-list">
+        {% for album in albums %}
+        <div class="album-item" data-album-id="{{ album['id'] }}" data-image-tag="{{ album['image_tag'] }}">
+            <img src="https://via.placeholder.com/150" alt="{{ album['name'] }}" id="album-image-{{ album['id'] }}">
+            <div class="album-title">
+                <a href="/jellyfinalbumtracks/{{ album['id'] }}">{{ album['name'] }}</a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            const albumItems = document.querySelectorAll('.album-item');
+
+            albumItems.forEach(function(albumItem) {
+                const albumId = albumItem.getAttribute('data-album-id');
+                const imageTag = albumItem.getAttribute('data-image-tag');
+
+                if (imageTag) {
+                    const imageUrl = `/jellyfin_image/${albumId}/${imageTag}`;
+                    const imgElement = document.getElementById(`album-image-${albumId}`);
+                    
+                    // Update the source of the image
+                    imgElement.src = imageUrl;
+                }
+            });
+        });
+    </script>
+</body>
+</html>
+

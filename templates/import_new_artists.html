@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Import New Artists</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon-32x32.png">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #333333;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        .container {
+            text-align: center;
+            width: 80%;
+        }
+
+        h1 {
+            color: #1DB954;
+            text-transform: uppercase;
+            font-size: 48px;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .grid-item {
+            background-color: #444444;
+            padding: 20px;
+            border-radius: 10px;
+        }
+
+        .grid-item select,
+        .grid-item button {
+            display: block;
+            margin: 10px auto;
+        }
+
+        button {
+            background-color: #1DB954;
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            cursor: pointer;
+            border-radius: 25px;
+            font-size: 16px;
+        }
+
+        button:disabled {
+            background-color: #666666;
+            cursor: not-allowed;
+        }
+
+        button:hover:enabled {
+            background-color: #1aa34a;
+        }
+    </style>
+</head>
+<body>
+    {% include 'nav.html' %}
+    <div class="container">
+        <h1>Import New Artists</h1>
+        <div class="grid">
+            <!-- Dynamic grid items for each folder -->
+            {% for folder in artist_folders %}
+            <div class="grid-item">
+                <p>{{ folder }}</p>
+                <select id="genre-{{ folder }}" onchange="enableImportButton(this, document.getElementById('import-{{ folder }}'))">
+                    <option value="">Select Genre</option>
+                    {% for genre in genres %}
+                    <option value="{{ genre }}">{{ genre }}</option>
+                    {% endfor %}
+                </select>
+                <button id="import-{{ folder }}" disabled onclick="moveArtistFolder('{{ folder }}', document.getElementById('genre-{{ folder }}').value)">Import</button>
+            </div>
+            {% endfor %}
+        </div>
+        <button onclick="scanJellyfinLibrary()">Scan Jellyfin Library</button>
+    </div>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        function enableImportButton(select, button) {
+            button.disabled = !select.value;
+        }
+
+        function moveArtistFolder(artistName, genre) {
+            if (!genre || genre === "Select Genre") {
+                alert("Please select a genre before importing.");
+                return;
+            }
+
+            const confirmation = confirm(`Are you sure you want to move ${artistName} to ${genre}?`);
+            if (confirmation) {
+                $.post('/move_artist_folder', {artistName: artistName, genre: genre}, function(response) {
+                    alert(response.message);
+                    if (response.success) {
+                        location.reload(); // Reload the page to update the list.
+                    }
+                }, 'json').fail(function(response) {
+                    alert('Failed to move the artist. Please check the server logs for more details.');
+                });
+            }
+        }
+
+        function scanJellyfinLibrary() {
+    $.post('/scan_jellyfin_library', function(data, status, xhr) {
+        if (xhr.status === 204) {
+            alert('Jellyfin Library Scan Initiated Successfully');
+        } else if (data && data.message) {
+            alert(data.message);
+        } else {
+            alert('Received an unexpected response from the server.');
+        }
+    }, 'json').fail(function(response) {
+        if (response.status === 204) {
+            alert('Jellyfin Library Scan Initiated Successfully');
+        } else {
+            alert('Failed to initiate Jellyfin library scan. Status Code: ' + response.status);
+        }
+    });
+}
+
+
+    </script>
+</body>
+</html>

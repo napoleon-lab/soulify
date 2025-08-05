@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Playlist Tracks</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon-32x32.png">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #333333;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+        }
+        .track-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+        }
+        .track-item {
+            background-color: #444;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .track-item img {
+            width: 150px;
+            height: 150px;
+            object-fit: cover;
+            border-radius: 8px;
+            cursor: pointer; /* Indicate clickable image */
+        }
+        .track-title {
+            font-size: 16px;
+            margin-top: 10px;
+        }
+        .track-artist {
+            font-size: 14px;
+            color: #aaaaaa;
+        }
+        button {
+            background-color: #1DB954;
+            border: none;
+            color: white;
+            padding: 5px 10px;
+            margin-top: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #1aa34a;
+        }
+
+        a {
+            color: #E0E0E0; /* Light gray for better visibility on dark backgrounds */
+            text-decoration: none; /* Removes underline for a cleaner look */
+        }
+
+        a:hover {
+            color: #FFFFFF; /* Brighter white on hover for better interaction feedback */
+            text-decoration: underline; /* Adds underline on hover to indicate interactivity */
+        }
+    </style>
+    
+    <script>
+        // Function to handle track download queuing
+        function downloadTrack(artistName, albumName, trackName) {
+            const url = '/download_track';
+            const data = {
+                artistName: artistName,
+                albumName: albumName,
+                trackName: trackName
+            };
+
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(json => {
+                if (json.status === 'success') {
+                    // Notify the user that the track download has been queued
+                    alert(`Track download has been added to the queue. Command ID: ${json.command_id}`);
+                } else {
+                    alert(`Failed to initiate download: ${json.message}`);
+                }
+            })
+            .catch(error => {
+                console.error('Error downloading track:', error);
+                alert('Error sending download request: ' + error.message);
+            });
+        }
+
+        // Function to play preview when album art is clicked
+        function playPreview(trackId) {
+            // Fetch the preview URL from the backend
+            fetch(`/track_preview/${trackId}`)
+            .then(response => response.json())
+            .then(data => {
+                const previewUrl = data.preview_url;
+                if (previewUrl) {
+                    // Create or reuse an audio element to play the preview
+                    let audio = document.getElementById('preview-audio');
+                    if (!audio) {
+                        audio = document.createElement('audio');
+                        audio.id = 'preview-audio';
+                        document.body.appendChild(audio);
+                    }
+                    audio.src = previewUrl;
+                    audio.play();
+                } else {
+                    alert('Preview not available for this track.');
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching track preview:', error);
+                alert('Error fetching track preview.');
+            });
+        }
+    </script>
+</head>
+<body>
+    {% include 'nav.html' %}
+    <h1>Tracks for Playlist: {{ playlist_name }}</h1>
+    
+    <div class="track-list">
+        {% for track in tracks %}
+        <div class="track-item">
+            <img src="{{ track['track']['album']['images'][0]['url'] if track['track']['album']['images'] else 'https://cdn.icon-icons.com/icons2/1504/PNG/512/unknown_103657.png' }}" alt="{{ track['track']['name'] }}" onclick="playPreview('{{ track['track']['id'] }}')">
+            <div class="track-title">
+                <a href="/albumtracks/{{ track['track']['album']['id'] }}">{{ track['track']['name'] }}</a>
+            </div>
+
+            <div class="track-artist">
+                <a href="/artist/{{ track['track']['artists'][0]['id'] }}">{{ track['track']['artists'][0]['name'] }}</a>
+            </div>
+            <!-- Queue Track Download Button -->
+            <button onclick="downloadTrack('{{ track['track']['artists'][0]['name'] }}', '{{ track['track']['album']['name'] }}', '{{ track['track']['name'] }}')">Queue Track Download</button>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Audio element for preview playback -->
+    <audio id="preview-audio" style="display:none;"></audio>
+</body>
+</html>

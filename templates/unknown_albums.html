@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Unknown Albums</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon-32x32.png">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #333333;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .container {
+            text-align: center;
+            width: 80%;
+        }
+        h1 {
+            color: #1DB954;
+            text-transform: uppercase;
+            font-size: 48px;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .grid-item {
+            background-color: #444444;
+            padding: 20px;
+            border-radius: 10px;
+        }
+        .grid-item input,
+        .grid-item select,
+        .grid-item button {
+            display: block;
+            margin: 10px auto;
+        }
+        input[type="number"] {
+            padding: 5px;
+            border-radius: 5px;
+        }
+        button {
+            background-color: #1DB954;
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            cursor: pointer;
+            border-radius: 25px;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #1aa34a;
+        }
+        .other-country-input {
+            display: none;
+        }
+    </style>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js" integrity="sha384-vtXRMe3mGCbOeY7l30aIg8H9p3GdeSe4IFlP6G8JMa7o7lXvnz3GFKzPxzJdPfGK" crossorigin="anonymous"></script>
+    <script>
+        $(document).ready(function() {
+            // Handle release country input toggle
+            $('.release-country').each(function() {
+                var associatedInputId = 'other-country-' + $(this).attr('id').split('-').pop();
+                showOtherCountryInput(this, associatedInputId);
+            });
+
+            $('.release-country').on('change', function() {
+                var associatedInputId = 'other-country-' + $(this).attr('id').split('-').pop();
+                showOtherCountryInput(this, associatedInputId);
+            });
+
+            $('.genre-select').on('change', function() {
+                var genreSelect = $(this);
+                loadArtistsForGenre(genreSelect);
+            });
+
+            // Preload function for genres and artists
+            function preloadGenresAndArtists() {
+                $('.genre-select').each(function() {
+                    $(this).find('option:eq(1)').prop('selected', true);
+                    loadArtistsForGenre($(this));
+                });
+            }
+
+            function loadArtistsForGenre(genreSelect) {
+                var genre = genreSelect.val();
+                var artistSelect = genreSelect.closest('form').find('.artist-select');
+                if (genre) {
+                    $.get('/get_artists_by_genre', { genre: genre }, function(data) {
+                        console.log("Received data:", data);  // Debugging output
+                        artistSelect.empty();
+                        artistSelect.append('<option value="">Select Artist/Album Artist</option>');
+                        if (data.artists && data.artists.length > 0) {
+                            data.artists.forEach(function(artist) {
+                                artistSelect.append($('<option></option>').attr('value', artist).text(artist));
+                            });
+                        } else {
+                            artistSelect.append('<option value="">No artists available</option>');
+                        }
+                    }).fail(function() {
+                        alert('Error fetching artists for the selected genre.');
+                    });
+                }
+            }
+
+            function showOtherCountryInput(selectElement, inputId) {
+                var otherInput = document.getElementById(inputId);
+                if (otherInput) {
+                    if (selectElement.value === 'Other') {
+                        otherInput.style.display = 'block';
+                        otherInput.setAttribute('required', 'required');
+                    } else {
+                        otherInput.style.display = 'none';
+                        otherInput.removeAttribute('required');
+                        otherInput.value = '';
+                    }
+                }
+            }
+
+            // Trigger preloading on document ready
+            preloadGenresAndArtists();
+        });
+    </script>
+</head>
+<body>
+    {% include 'nav.html' %}
+    <div class="container">
+        <h1>Unknown Albums</h1>
+        <div class="grid">
+            {% for folder in unknown_album_folders %}
+            <form method="POST" action="/ImportUnknownAlbum">
+                <input type="hidden" name="folder" value="{{ folder }}">
+                <div class="grid-item">
+                    <p><strong>Folder:</strong> {{ folder }}</p>
+
+                    <select name="genre" id="genre-{{ folder }}" class="genre-select" data-folder="{{ folder }}">
+                        <option value="">Select Genre</option>
+                        {% for genre in genres %}
+                        <option value="{{ genre }}">{{ genre }}</option>
+                        {% endfor %}
+                    </select>
+
+                    <select name="artist" id="artist-{{ folder }}" class="artist-select">
+                        <option value="">Select Artist/Album Artist</option>
+                    </select>
+
+                    <select name="albumType" id="album-type-{{ folder }}">
+                        <option value="ALBUM">ALBUM</option>
+                        <option value="SINGLE">SINGLE</option>
+                        <option value="EP">EP</option>
+                        <option value="OTHER">OTHER</option>
+                    </select>
+
+                    <input type="number" name="originalYear" id="orig-release-year-{{ folder }}" placeholder="Original Release Year" min="1900" max="2100">
+                    <input type="number" name="releaseYear" id="release-year-{{ folder }}" placeholder="Release Year" min="1900" max="2100">
+                    <input type="text" name="albumNameAdj" id="album-name-adj-{{ folder }}" placeholder="Album Name Adjustment">
+
+                    <select name="country" id="release-country-{{ folder }}" class="release-country">
+                        <option value="GB">GB</option>
+                        <option value="US">US</option>
+                        <option value="WW">WW</option>
+                        <option value="Other">Other</option>
+                    </select>
+
+                    <input type="text" name="otherCountry" id="other-country-{{ folder }}" class="other-country-input" placeholder="Specify Country">
+
+                    <button type="submit">Import</button>
+                </div>
+            </form>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>
+

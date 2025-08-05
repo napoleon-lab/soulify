@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Playlists in Category</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon-32x32.png">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #333333;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 20px;
+        }
+        .playlist {
+            text-align: center;
+        }
+        .playlist img {
+            width: 150px;
+            height: 150px;
+            object-fit: cover;
+            border-radius: 8px;
+        }
+        .playlist-name {
+            margin-top: 8px;
+            font-size: 18px;
+        }
+        .playlist-name a {
+            color: #E0E0E0;
+            text-decoration: none;
+        }
+        .playlist-name a:hover {
+            color: #FFFFFF;
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    {% include 'nav.html' %}
+    <h1>Playlists in {{ category_name }} Category</h1>
+    <div class="grid">
+        {% for playlist in category_playlists %}
+        <div class="playlist">
+            <img src="{{ playlist.images[0].url if playlist.images else 'https://via.placeholder.com/150' }}" alt="{{ playlist.name }}">
+            <div class="playlist-name">
+                <a href="/playlisttracks/{{ playlist.id }}?playlist_name={{ playlist.name }}">{{ playlist.name }}</a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</body>
+</html>
+

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Import Unknown Album</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon-32x32.png">
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            display: block;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #333333;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            min-height: 100vh;
+        }
+
+        .container {
+            display: block;
+            width: 98%;
+            max-width: 1920px;
+            margin: 20px auto;
+            text-align: center;
+            padding: 0;
+        }
+
+        h1, h2 {
+            color: #1DB954;
+            font-size: 48px;
+            font-weight: bold;
+            margin: 20px 0;
+        }
+
+        .details, table {
+            width: 100%;
+            margin-bottom: 20px;
+        }
+
+        table {
+            width: 100%;
+            table-layout: auto;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #ffffff;
+        }
+
+        /* Adjust column widths */
+        th.filename, td.filename,
+        th.track-name, td.track-name {
+            width: 40%;
+        }
+
+        th.track-number, td.track-number,
+        th.disc-number, td.disc-number {
+            width: 5%;
+        }
+
+        /* Input styling */
+        input[type="number"], input[type="text"], select {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 8px;
+            border: 1px solid #aaa;
+        }
+
+        button {
+            background-color: #1DB954;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        button:hover {
+            background-color: #1aa34a;
+        }
+    </style>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        $(document).ready(function () {
+            function escapeHtml(unsafe) {
+                return unsafe
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+            }
+
+            function decodeHtml(html) {
+                var txt = document.createElement("textarea");
+                txt.innerHTML = html;
+                return txt.value;
+            }
+
+            function updateDiscFolders() {
+                var mediaFormat = $('#media-format').val();
+                var totalDiscs = parseInt($('#total-discs').val());
+                var discContainers = $('#disc-folders');
+                discContainers.empty(); // Clear existing entries
+
+                for (var i = 1; i <= totalDiscs; i++) {
+                    var discNumber = i.toString().padStart(2, '0');
+                    var discLabel = mediaFormat + ' ' + discNumber;
+                    discContainers.append($('<p>').text(discLabel));
+                }
+            }
+
+            function updateFileName(index) {
+                var fileExtension = $('#old-filename-' + index).data('extension');
+                var artist = escapeHtml("{{ artist | escape }}");
+                var albumNameAdj = escapeHtml("{{ album_name_adj | escape }}");
+                var trackNumber = $('#track-number-' + index).val().padStart(2, '0');
+                var trackName = escapeHtml($('#track-name-' + index).val());
+
+                var trackNameWithoutExtension = trackName.substring(0, trackName.lastIndexOf('.')) || trackName;
+                var newFileName = `${artist} - ${albumNameAdj} - ${trackNumber} - ${trackNameWithoutExtension}.${fileExtension}`;
+                $('#new-filename-' + index).text(decodeHtml(newFileName));
+
+                // Update hidden inputs with the latest values
+                $('#hidden-track-number-' + index).val(trackNumber);
+                $('#hidden-track-name-' + index).val(trackName);
+            }
+
+            function updateReleaseFolder() {
+                var mediaFormat = $('#media-format').val();
+                var country = "{{ country | escape }}";
+                var releaseYear = "{{ release_year | escape }}";
+                var releaseFolder = '[' + mediaFormat + '] [' + country + '] [' + releaseYear + ']';
+                $('#release-folder').text(releaseFolder);
+            }
+
+            $('#media-format, #total-discs').change(updateDiscFolders);
+            $('#media-format').change(updateReleaseFolder);
+
+            $('.track-number-input, .track-name-input').on('input', function () {
+                var index = $(this).data('index');
+                updateFileName(index);
+            });
+
+            $('#rename-files-button').click(function () {
+                var filesToRename = [];
+                var validExtensions = ['.mp3', '.flac', '.aac', '.wav', '.m4a'];
+
+                $('table tbody tr').each(function () {
+                    var oldFileName = $(this).find('td').eq(0).text();
+                    var newFileName = $(this).find('td').eq(1).text();
+                    var fileExtension = oldFileName.slice(oldFileName.lastIndexOf('.')).toLowerCase();
+
+                    if (validExtensions.includes(fileExtension)) {
+                        newFileName = newFileName.replace(/&amp;/g, '&')
+                            .replace(/&lt;/g, '<')
+                            .replace(/&gt;/g, '>')
+                            .replace(/&quot;/g, '"')
+                            .replace(/&#039;/g, "'");
+                        if (oldFileName && newFileName) {
+                            filesToRename.push({
+                                oldFileName: oldFileName.trim(),
+                                newFileName: newFileName.trim()
+                            });
+                        }
+                    }
+                });
+
+                if (filesToRename.length > 0) {
+                    $.ajax({
+                        url: '/rename_files',
+                        type: 'POST',
+                        contentType: 'application/json',
+                        data: JSON.stringify({ files: filesToRename, folder: '{{ folder | escape }}' }),
+                        success: function () {
+                            alert('Files renamed successfully!');
+                            location.reload();
+                        },
+                        error: function (xhr) {
+                            alert('Error renaming files: ' + xhr.responseText);
+                        }
+                    });
+                } else {
+                    alert('No valid audio files to rename.');
+                }
+            });
+
+            $('#organize-album-button').click(function () {
+                var filesToMove = [];
+                $('table tbody tr').each(function () {
+                    var oldFileName = $(this).find('td').eq(0).text();
+                    var discNumber = $(this).find('input[name^="discNumber"]').val() || null;
+                    filesToMove.push({ oldFileName: oldFileName.trim(), discNumber: discNumber });
+                });
+
+                var decodedGenre = decodeHtml('{{ genre | escape }}');
+                var decodedArtistFolder = decodeHtml('{{ artist_folder | escape }}');
+                var decodedAlbumFolder = decodeHtml('{{ album_folder | escape }}');
+                var decodedReleaseFolder = decodeHtml($('#release-folder').text().trim());
+
+                var folderData = {
+                    files: filesToMove,
+                    folder: '{{ folder | escape }}',
+                    artist_folder: decodedArtistFolder,
+                    album_folder: decodedAlbumFolder,
+                    release_folder: decodedReleaseFolder,
+                    media_format: $('#media-format').val(),
+                    genre: decodedGenre
+                };
+
+                $.ajax({
+                    url: '/organize_album',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(folderData),
+                    success: function () {
+                        alert('Album organized successfully!');
+                        location.reload();
+                    },
+                    error: function (xhr) {
+                        alert('Error organizing album: ' + xhr.responseText);
+                    }
+                });
+            });
+
+            $('#update-metadata-button').click(function (e) {
+                e.preventDefault();
+
+                var formData = $('#metadata-form').serialize();
+                $.ajax({
+                    url: '/process_metadata',
+                    type: 'POST',
+                    data: formData,
+                    success: function (response) {
+                        alert(response.message);
+                    },
+                    error: function (xhr) {
+                        alert('Error updating metadata: ' + xhr.responseText);
+                    }
+                });
+            });
+
+            updateDiscFolders();
+            updateReleaseFolder();
+        });
+    </script>
+</head>
+<body>
+    {% include 'nav.html' %}
+    <div class="container">
+        <h1>Import Unknown Album</h1>
+
+        <!-- Album Details -->
+        <div class="details">
+            <p><strong>Artist:</strong> {{ artist | escape }}</p>
+            <p><strong>Genre:</strong> {{ genre | escape }}</p>
+            <p><strong>Album Type:</strong> {{ album_type | escape }}</p>
+            <p><strong>Original Release Year:</strong> {{ original_year | escape }}</p>
+            <p><strong>Release Year:</strong> {{ release_year | escape }}</p>
+            <p><strong>Album Name Adjustment:</strong> {{ album_name_adj | escape }}</p>
+            <p><strong>Country:</strong> {{ country | escape }}</p>
+            <p><strong>Artist Folder:</strong> {{ artist_folder | escape }}</p>
+            <p><strong>Album Folder:</strong> {{ album_folder | escape }}</p>
+            <p><strong>Release Folder:</strong> <span id="release-folder"></span></p>
+        </div>
+
+        <!-- Media Format Dropdown -->
+        <div>
+            <label for="media-format">Media Format:</label>
+            <select id="media-format" name="mediaFormat">
+                <option value="CD">CD</option>
+                <option value="Vinyl">Vinyl</option>
+                <option value="Cassette">Cassette</option>
+                <option value="Digital Media">Digital Media</option>
+            </select>
+        </div>
+
+        <!-- Total Discs Input -->
+        <div>
+            <label for="total-discs">Total Discs:</label>
+            <input type="number" id="total-discs" name="totalDiscs" min="1" step="1" value="1">
+        </div>
+
+        <h2>Disc Folders</h2>
+        <div id="disc-folders"></div>
+
+        <h2>Files in the Folder "{{ folder | escape }}"</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>File Name</th>
+                    <th class="disc-number">Disc Number</th>
+                    <th class="track-number">Track Number</th>
+                    <th class="track-name">Track Name</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for filename, full_path in file_details %}
+                <tr>
+                    <td>{{ filename | escape }}</td>
+                    {% if filename.split('.')[-1].lower() in [
+    'mp3', 'flac', 'wav', 'aac', 'aiff', 'ogg', 'wma', 'alac', 'opus', 
+    'm4a', 'mp2', 'ac3', 'dsd', 'dff', 'dsf', 'wv', 'tta', 'mka', 'aif', 
+    'pcm', 'caf', 'mid', 'midi', 'amr', '3gp', 'ra', 'rm', 'voc', 'au'
+] %}
+
+                    <td><input type="number" id="disc-number-{{ loop.index }}" name="discNumber-{{ loop.index }}" min="1" step="1" value="1"></td>
+                    <td><input type="number" id="track-number-{{ loop.index }}" name="trackNumber-{{ loop.index }}" min="1" step="1" value="{{ loop.index }}" class="track-number-input" data-index="{{ loop.index }}"></td>
+                    <td><input type="text" id="track-name-{{ loop.index }}" name="trackName-{{ loop.index }}" value="{{ filename.rsplit('.', 1)[0] | escape }}" class="track-name-input" data-index="{{ loop.index }}"></td>
+                    {% else %}
+                    <td colspan="4">Not an audio file</td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <h2>Changes to be Applied</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Existing File Name</th>
+                    <th>New File Name</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for filename, full_path in file_details %}
+                <tr>
+                    <td id="old-filename-{{ loop.index }}" data-extension="{{ filename.split('.')[-1] }}">{{ filename | escape }}</td>
+                    {% if filename.split('.')[-1].lower() in [
+    'mp3', 'flac', 'wav', 'aac', 'aiff', 'ogg', 'wma', 'alac', 'opus', 
+    'm4a', 'mp2', 'ac3', 'dsd', 'dff', 'dsf', 'wv', 'tta', 'mka', 'aif', 
+    'pcm', 'caf', 'mid', 'midi', 'amr', '3gp', 'ra', 'rm', 'voc', 'au'
+] %}
+                    <td id="new-filename-{{ loop.index }}">
+                        {{ artist | escape }} - {{ album_name_adj | escape }} - {{ '%02d' % loop.index }} - {{ filename.rsplit('.', 1)[0] | escape }}
+                    </td>
+                    {% else %}
+                    <td>Not an audio file</td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <!-- Metadata Form -->
+        <form id="metadata-form" action="/process_metadata" method="POST">
+            <input type="hidden" name="folder" value="{{ folder | escape }}">
+            <input type="hidden" name="artist" value="{{ artist | escape }}">
+            <input type="hidden" name="album_artist" value="{{ artist | escape }}">
+            <input type="hidden" name="genre" value="{{ genre | escape }}">
+            <input type="hidden" name="album" value="{{ album_name_adj | escape }}">
+
+            {% for filename, full_path in file_details %}
+            {% if filename.split('.')[-1].lower() in ['mp3', 'flac', 'wav', 'aac'] %}
+            <input type="hidden" id="hidden-track-number-{{ loop.index }}" name="track_number_{{ loop.index }}" value="{{ loop.index }}">
+            <input type="hidden" id="hidden-track-name-{{ loop.index }}" name="track_name_{{ loop.index }}" value="{{ filename | escape }}">
+            {% endif %}
+            {% endfor %}
+
+            <button id="update-metadata-button" type="button">Update Metadata</button>
+            <button id="rename-files-button" type="button">Rename</button>
+            <button id="organize-album-button" type="button">Organize Album</button>
+        </form>
+
+        <button onclick="window.history.back()">Go Back</button>
+    </div>
+</body>
+</html>
+
