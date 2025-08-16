@@ -225,8 +225,11 @@ def refresh_artist_metadata(artist_id):
         logging.error(f"Error refreshing metadata for artist ID {artist_id}: {e}")
 
 # Function to move contents of one folder to another, merging if necessary
-def move_folder_contents(src, dst):
-    """Move contents of src to dst, merging if dst already exists."""
+def move_folder_contents(src, dst, extensions=None):
+    """
+    Move contents of src to dst, merging if dst already exists.
+    If `extensions` is provided, only files with those extensions are moved.
+    """
     if not os.path.exists(dst):
         os.makedirs(dst)
 
@@ -235,11 +238,17 @@ def move_folder_contents(src, dst):
         dst_path = os.path.join(dst, item)
 
         if os.path.isdir(src_path):
-            # Recursively merge directories
-            move_folder_contents(src_path, dst_path)
+            # Recursively merge directories, passing the extensions filter
+            move_folder_contents(src_path, dst_path, extensions)
         else:
-            # Move files, but replace if the file in dst is smaller
-            move_and_compare(src_path, dst_path)
+            # If extensions are specified, check the file extension
+            if extensions:
+                file_ext = os.path.splitext(item)[1].lower()
+                if file_ext in extensions:
+                    move_and_compare(src_path, dst_path)
+            else:
+                # If no extensions are specified, move the file
+                move_and_compare(src_path, dst_path)
 
 # Function to process each artist folder
 def process_artist_folder(artist_folder):
@@ -534,12 +543,10 @@ def move_playlist_folders():
             try:
                 if os.path.exists(destination_folder):
                     logging.warning(f"Playlist folder {destination_folder} already exists. Merging music files.")
-                    move_folder_contents(item_path, destination_folder)
-                else:
-                    os.makedirs(destination_folder, exist_ok=True)
-                    for file in music_files:
-                        shutil.move(os.path.join(item_path, file), destination_folder)
                 
+                # Move only music files, creating the destination folder if needed.
+                move_folder_contents(item_path, destination_folder, music_extensions)
+
                 logging.info(f"Moved {len(music_files)} music files to: {destination_folder}")
                 total_files_moved += len(music_files)
                 playlists_to_create.append((playlist_name, music_files, item_path))
