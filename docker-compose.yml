@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  soulify:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: soulify-container
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./music/downloads:/app/downloads
+      - ./music/library:/app/music
+      - ./.config.ini:/app/config.ini
+      # Optional: Mount your own SSL certs if you have them (match filename with the config values in config.ini)
+      # - ./path/to/your/cert.crt:/app/domain.ts.net.crt
+      # - ./path/to/your/key.key:/app/domain.ts.net.key
+    restart: unless-stopped
+    # environment:
+      # Example of overriding a config value with an environment variable
+      # - SOULIFY_SERVER_BASE_URL=https://your.domain.com:5000
+
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin-container
+    user: "${HOST_USER_ID:-1000}:${HOST_GROUP_ID:-1000}"
+    ports:
+      - "8096:8096"    # Web UI
+      - "7359:7359/udp" # DLNA
+      - "1900:1900/udp" # SSDP
+    volumes:
+      # Config directory
+      - ./jellyfin/config:/config
+      # Cache directory (optional)
+      - ./jellyfin/cache:/cache
+      # Mount music library so Jellyfin can read it
+      - ./music/library:/media/music
+    environment:
+      - JELLYFIN_PublishedServerUrl=http://localhost:8096
+    restart: unless-stopped

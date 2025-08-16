@@ -3,6 +3,7 @@ from CommandConstruct import (construct_track_download_command,
                               construct_album_download_command,
                               construct_artist_download_command,
                               construct_playlist_download_command)
+from config_manager import get_config, get_setting, write_config, generate_sldl_config
 from datetime import datetime
 import requests
 import base64
@@ -11,8 +12,8 @@ import os
 import subprocess
 import logging
 import time
+import sys
 import uuid
-import configparser
 import shlex
 from threading import Thread
 import re
@@ -29,6 +30,28 @@ from mutagen.mp4 import MP4
 from mutagen.wavpack import WavPack
 import stat
 from collections import deque
+
+from werkzeug import serving
+
+parent_log_request = serving.WSGIRequestHandler.log_request
+
+
+def log_request(self, *args, **kwargs):
+    if any(self.path.startswith(p) for p in ['/update_console_output', '/health', '/ping']):
+        return
+
+    parent_log_request(self, *args, **kwargs)
+
+
+serving.WSGIRequestHandler.log_request = log_request
+
+logging.basicConfig(
+    level=logging.INFO,  # Use INFO or DEBUG
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)  # Logs go to stdout (visible in Docker)
+    ]
+)
 
 # Store information about active downloads
 active_downloads = {}
@@ -57,96 +80,12 @@ command_process = None
 
 # Path to configuration and post-processing scripts
 base_dir = os.path.dirname(os.path.abspath(__file__))
-soulify_conf_path = os.path.join(base_dir, 'soulify.conf')
 postdownload_scripts_dir = os.path.join(base_dir, 'scripts', 'postdownload')
 run_all_script = os.path.join(postdownload_scripts_dir, 'RunAll.py')
 sort_move_music_script = os.path.join(postdownload_scripts_dir, 'Sort_MoveMusicDownloads.py')
 update_with_mb_script = os.path.join(postdownload_scripts_dir, 'UpdatewithMB.sh')
-pdscript_conf_path = os.path.join(base_dir, 'pdscript.conf')
 
 ansi_escape = re.compile(r'\x1B[@-_][0-?]*[ -/]*[@-~]')
-
-
-# Function to read the soulify.conf file
-def read_soulify_conf():
-    config = configparser.ConfigParser()
-    config.read(soulify_conf_path)
-    try:
-        update_with_mb = config.getboolean('PostDownloadProcessing', 'UpdatemetadataWithMusicBrainz', fallback=True)
-        update_library = config.getboolean('PostDownloadProcessing', 'UpdateLibraryMetadataAndRefreshJellyfin', fallback=True)
-        return update_with_mb, update_library
-    except configparser.Error as e:
-        logging.error(f"Error reading configuration: {e}")
-        return False, False  # Fallback to False if there's an error
-        
-# Function to write soulify.conf (missing in original code)
-def write_soulify_conf(settings):
-    config = configparser.ConfigParser()
-    config['PostDownloadProcessing'] = {
-        'UpdatemetadataWithMusicBrainz': str(settings['UpdatemetadataWithMusicBrainz']),
-        'UpdateLibraryMetadataAndRefreshJellyfin': str(settings['UpdateLibraryMetadataAndRefreshJellyfin'])
-    }
-    try:
-        with open(soulify_conf_path, 'w') as configfile:
-            config.write(configfile)
-    except IOError as e:
-        logging.error(f"Error writing to soulify.conf: {e}")
-
-# Function to write sldl.conf
-def write_sldl_conf(settings):
-    try:
-        with open(sldlConfigPath, 'w') as f:
-            f.write("# Soulseek Credentials (required)\n")
-            f.write(f"username = {settings.get('username', '')}\n")
-            f.write(f"password = {settings.get('password', '')}\n")
-            f.write("\n# General Download Settings\n")
-            f.write(f"path = {settings.get('path', '')}\n")
-            f.write("\n# Search Settings\n")
-            f.write(f"no-remove-special-chars = {settings.get('no-remove-special-chars', 'false')}\n")
-            f.write("\n# Preferred File Conditions\n")
-            f.write(f"pref-format = {settings.get('pref-format', '')}\n")
-            f.write("\n# Spotify Settings\n")
-            f.write(f"spotify-id = {settings.get('spotify-id', '')}\n")
-            f.write(f"spotify-secret = {settings.get('spotify-secret', '')}\n")
-            f.write("\n# Output Settings\n")
-            f.write(f"m3u = {settings.get('m3u', 'none')}\n")
-    except IOError as e:
-        logging.error(f"Error writing to sldl.conf: {e}")
-        
-# Function to read pdscript.conf
-def read_pdscript_conf():
-    config = configparser.ConfigParser()
-    config.read(pdscript_conf_path)
-    try:
-        settings = {
-            'destination_root': config.get('Paths', 'destination_root', fallback='/mnt/EXTHDD/Media/Audio/Music/Music - Managed (Lidarr)/'),
-            'new_artists_dir': config.get('Paths', 'new_artists_dir', fallback='/mnt/EXTHDD/Download/Music New Artists/'),
-            'api_base_url': config.get('API Details', 'API_BASE_URL', fallback='http://192.168.0.7:8096'),
-            'api_auth_token': config.get('API Details', 'API_AUTH_TOKEN', fallback='b30092879a9646eb9e676b2922c9c1e4'),
-            'main_music_library_id': config.get('API Details', 'main_music_library_id', fallback='7e64e319657a9516ec78490da03edccb')
-        }
-        return settings
-    except configparser.Error as e:
-        logging.error(f"Error reading pdscript.conf: {e}")
-        return {}
-
-
-# Function to write pdscript.conf
-def write_pdscript_conf(settings):
-    config = configparser.ConfigParser()
-    config['Paths'] = {
-        'destination_root': settings.get('destination_root', '/mnt/EXTHDD/Media/Audio/Music/Music - Managed (Lidarr)/'),
-        'new_artists_dir': settings.get('new_artists_dir', '/mnt/EXTHDD/Download/Music New Artists/')
-    }
-    config['API Details'] = {
-        'API_BASE_URL': settings.get('API_BASE_URL', 'http://192.168.0.7:8096'),
-        'API_AUTH_TOKEN': settings.get('API_AUTH_TOKEN', 'b30092879a9646eb9e676b2922c9c1e4')
-    }
-    try:
-        with open(pdscript_conf_path, 'w') as configfile:
-            config.write(configfile)
-    except IOError as e:
-        logging.error(f"Error writing to pdscript.conf: {e}")
 
 def clean_special_chars(query):
     # First remove all commas
@@ -155,60 +94,55 @@ def clean_special_chars(query):
     return re.sub(r'[^a-zA-Z0-9\s\-]', '', query)
 
 
+def log_post_processing_output(result, script_name):
+    """Logs the output of post-processing scripts."""
+    logging.info(f"--- {script_name} stdout ---")
+    print(result.stdout)
+    logging.info(f"--- {script_name} stderr ---")
+    if result.stderr:
+        print(result.stderr)
+    logging.info(f"--- End of {script_name} output ---")
+
+
 # Function to execute post-processing scripts based on the configuration
-def run_post_processing():
-    update_with_mb, update_library = read_soulify_conf()
+def run_post_processing(command_id):
+    """
+    Runs post-processing scripts and, if the download was a playlist,
+    triggers Jellyfin playlist creation.
+    """
+    update_with_mb = get_setting('PostProcessing', 'update_metadata_with_musicbrainz', 'True').lower() == 'true'
+    update_library = get_setting('PostProcessing', 'update_library_metadata_and_refresh_jellyfin', 'True').lower() == 'true'
 
     # Check conditions and run the appropriate scripts
     if update_library and update_with_mb:
-        # Run RunAll.py
-        logging.info("Running RunAll.py script...")
+        logging.info(f"[{command_id}] Running RunAll.py script...")
         result = subprocess.run(['python3', run_all_script], capture_output=True, text=True)
         log_post_processing_output(result, 'RunAll.py')
     elif update_library and not update_with_mb:
-        # Run Sort_MoveMusicDownloads.py
-        logging.info("Running Sort_MoveMusicDownloads.py script...")
+        logging.info(f"[{command_id}] Running Sort_MoveMusicDownloads.py script...")
         result = subprocess.run(['python3', sort_move_music_script], capture_output=True, text=True)
         log_post_processing_output(result, 'Sort_MoveMusicDownloads.py')
     elif update_with_mb and not update_library:
-        # Run UpdatewithMB.sh
-        logging.info("Running UpdatewithMB.sh script...")
+        logging.info(f"[{command_id}] Running UpdatewithMB.sh script...")
         result = subprocess.run(['bash', update_with_mb_script], capture_output=True, text=True)
         log_post_processing_output(result, 'UpdatewithMB.sh')
     else:
-        # No post-processing needed
-        logging.info("No post-processing scripts to run.")
+        logging.info(f"[{command_id}] No post-processing scripts to run.")
 
-# Load the Spotify settings from sldl.conf
-def parse_spotify_conf(file_path):
-    spotify_settings = {}
-    try:
-        with open(file_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith('#') or not line:
-                    continue
-                key_value = line.split('=', 1)
-                if len(key_value) == 2:
-                    key, value = key_value[0].strip(), key_value[1].strip()
-                    spotify_settings[key] = value
-    except IOError as e:
-        logging.error(f"Error reading config file {file_path}: {e}")
-    return spotify_settings
-
-
-
+    # After sorting, create Jellyfin playlist if it was a playlist download
+    with command_lock:
+        command_info = active_downloads.get(command_id, {})
+    
 # Dynamically construct the paths based on the location of SpotWebApp.py
 base_dir = os.path.dirname(os.path.abspath(__file__))
 sldlPath = os.path.join(base_dir, 'sldl')
 sldlConfigPath = os.path.join(base_dir, 'sldl.conf')
-spotifyauthConfigPath = os.path.join(base_dir, 'spotifyauth.conf')
 
-# Now that parse_spotify_conf is defined, you can call it
-spotify_config = parse_spotify_conf(spotifyauthConfigPath)
-CLIENT_ID = spotify_config.get('spotify-id')
-CLIENT_SECRET = spotify_config.get('spotify-secret')
-REDIRECT_URI = spotify_config.get('redirect-uri')
+# Load Spotify settings from config_manager
+CLIENT_ID = get_setting('Spotify', 'client_id')
+CLIENT_SECRET = get_setting('Spotify', 'client_secret')
+REDIRECT_URI = get_setting('Spotify', 'redirect_uri')
+
 
 # Spotify API URLs and scope
 SPOTIFY_AUTH_URL = "https://accounts.spotify.com/authorize"
@@ -478,42 +412,55 @@ def downloads():
 @app.route('/settings', methods=['GET', 'POST'])
 def settings():
     if request.method == 'POST':
-        # Process form submission for sldl.conf
-        sldl_settings = {
-            'username': request.form.get('username'),
-            'password': request.form.get('password'),
-            'path': request.form.get('path'),
-            'no-remove-special-chars': request.form.get('no-remove-special-chars'),
-            'pref-format': request.form.get('pref-format'),
-            'spotify-id': request.form.get('spotify-id'),
-            'spotify-secret': request.form.get('spotify-secret'),
-            'm3u': request.form.get('m3u')
-        }
-        write_sldl_conf(sldl_settings)
+        config = get_config()
 
-        # Process form submission for soulify.conf
-        soulify_settings = {
-            'UpdatemetadataWithMusicBrainz': request.form.get('UpdatemetadataWithMusicBrainz') == 'true',
-            'UpdateLibraryMetadataAndRefreshJellyfin': request.form.get('UpdateLibraryMetadataAndRefreshJellyfin') == 'true'
-        }
-        write_soulify_conf(soulify_settings)
+        # sldl/soulseek/spotify settings
+        config.set('Soulseek', 'username', request.form.get('username'))
+        config.set('Soulseek', 'password', request.form.get('password'))
+        config.set('Paths', 'music_download_folder', request.form.get('path'))
+        config.set('sLDL', 'no-remove-special-chars', request.form.get('no-remove-special-chars'))
+        config.set('sLDL', 'pref-format', request.form.get('pref-format'))
+        config.set('Spotify', 'client_id', request.form.get('spotify-id'))
+        config.set('Spotify', 'client_secret', request.form.get('spotify-secret'))
+        config.set('sLDL', 'm3u', request.form.get('m3u'))
 
-        # Process form submission for pdscript.conf
-        pdscript_settings = {
-            'destination_root': request.form.get('destination_root'),
-            'new_artists_dir': request.form.get('new_artists_dir'),
-            'API_BASE_URL': request.form.get('api_base_url'),
-            'API_AUTH_TOKEN': request.form.get('api_auth_token')
-        }
-        write_pdscript_conf(pdscript_settings)
+        # soulify settings
+        config.set('PostProcessing', 'update_metadata_with_musicbrainz', str(request.form.get('UpdatemetadataWithMusicBrainz') == 'true'))
+        config.set('PostProcessing', 'update_library_metadata_and_refresh_jellyfin', str(request.form.get('UpdateLibraryMetadataAndRefreshJellyfin') == 'true'))
+
+        # pdscript/jellyfin/paths settings
+        config.set('Paths', 'destination_root', request.form.get('destination_root'))
+        config.set('Paths', 'new_artists_dir', request.form.get('new_artists_dir'))
+        config.set('Jellyfin', 'api_base_url', request.form.get('api_base_url'))
+        config.set('Jellyfin', 'api_auth_token', request.form.get('api_auth_token'))
+
+        write_config(config)
+        generate_sldl_config()
 
         return redirect(url_for('settings'))
 
     # For GET request, display current settings
-    sldl_settings = parse_sldl_conf(sldlConfigPath)
-    soulify_settings = read_soulify_conf()
-    pdscript_settings = read_pdscript_conf()
-
+    config = get_config()
+    sldl_settings = {
+        'username': config.get('Soulseek', 'username', fallback=''),
+        'password': config.get('Soulseek', 'password', fallback=''),
+        'path': config.get('Paths', 'music_download_folder', fallback=''),
+        'no-remove-special-chars': config.get('sLDL', 'no-remove-special-chars', fallback='false'),
+        'pref-format': config.get('sLDL', 'pref-format', fallback=''),
+        'spotify-id': config.get('Spotify', 'client_id', fallback=''),
+        'spotify-secret': config.get('Spotify', 'client_secret', fallback=''),
+        'm3u': config.get('sLDL', 'm3u', fallback='none')
+    }
+    soulify_settings = (
+        config.getboolean('PostProcessing', 'update_metadata_with_musicbrainz', fallback=True),
+        config.getboolean('PostProcessing', 'update_library_metadata_and_refresh_jellyfin', fallback=True)
+    )
+    pdscript_settings = {
+        'destination_root': config.get('Paths', 'destination_root', fallback=''),
+        'new_artists_dir': config.get('Paths', 'new_artists_dir', fallback=''),
+        'api_base_url': config.get('Jellyfin', 'api_base_url', fallback=''),
+        'api_auth_token': config.get('Jellyfin', 'api_auth_token', fallback='')
+    }
     return render_template('settings.html', sldl=sldl_settings, soulify=soulify_settings, pdscript=pdscript_settings)
 
 @app.route('/post_download_management')
@@ -524,10 +471,8 @@ def post_download_management():
 def move_artist_folder():
     artist_name = request.form['artistName']
     genre = request.form['genre']
-    config = configparser.ConfigParser()
-    config.read(pdscript_conf_path)
-    new_artists_dir = config.get('Paths', 'new_artists_dir')
-    destination_root = config.get('Paths', 'destination_root')
+    new_artists_dir = get_setting('Paths', 'new_artists_dir')
+    destination_root = get_setting('Paths', 'destination_root')
 
     source_path = os.path.join(new_artists_dir, artist_name)
     target_path = os.path.join(destination_root, genre, artist_name)
@@ -551,19 +496,17 @@ def move_artist_folder():
 
 @app.route('/ImportnewArtists')
 def import_new_artists():
-    config = configparser.ConfigParser()
-    config.read(pdscript_conf_path)
     try:
         # Retrieve paths from the configuration
-        new_artists_dir = config.get('Paths', 'new_artists_dir')
-        destination_root = config.get('Paths', 'destination_root')
+        new_artists_dir = get_setting('Paths', 'new_artists_dir')
+        destination_root = get_setting('Paths', 'destination_root')
 
         # List all folders at the root of the destination_root and sort them
         genres = [folder for folder in os.listdir(destination_root) if os.path.isdir(os.path.join(destination_root, folder))]
         genres.sort(key=lambda s: s.strip().upper())  # Strip whitespace and sort ignoring case
 
-    except configparser.Error as e:
-        logging.error(f"Error reading pdscript.conf: {e}")
+    except Exception as e:
+        logging.error(f"Error reading config or directories: {e}")
         genres = []  # Fallback to an empty list if there's a configuration read error
 
     artist_folders = [
@@ -642,12 +585,8 @@ def update_audio_metadata(file_path, artist, album_artist, genre, album, title, 
 # Endpoint to process metadata update for multiple files
 @app.route('/process_metadata', methods=['POST'])
 def process_metadata():
-    # Read the configuration file
-    config = configparser.ConfigParser()
-    config.read(pdscript_conf_path)
-
     # Get the unknown albums directory path from the configuration
-    unknown_albums_dir = config.get('Paths', 'unknown_albums_dir')
+    unknown_albums_dir = get_setting('Paths', 'unknown_albums_dir')
 
     # Get form data (submitted values)
     folder = request.form.get('folder')
@@ -687,11 +626,8 @@ def process_metadata():
 
 @app.route('/ImportUnknownAlbum', methods=['POST'])
 def import_unknown_album():
-    config = configparser.ConfigParser()
-    config.read(pdscript_conf_path)
-
     # Retrieve the unknown albums directory path from the configuration
-    unknown_albums_dir = config.get('Paths', 'unknown_albums_dir')
+    unknown_albums_dir = get_setting('Paths', 'unknown_albums_dir')
 
     # Get form data (submitted values)
     folder = request.form.get('folder')
@@ -750,12 +686,9 @@ def import_unknown_album():
 
 @app.route('/unknownAlbums')
 def unknown_albums():
-    config = configparser.ConfigParser()
-    config.read(pdscript_conf_path)
-    
     # Retrieve paths from the configuration
-    unknown_albums_dir = config.get('Paths', 'unknown_albums_dir')
-    destination_root = config.get('Paths', 'destination_root')
+    unknown_albums_dir = get_setting('Paths', 'unknown_albums_dir')
+    destination_root = get_setting('Paths', 'destination_root')
 
     # Get the list of folders (root level only) for unknown albums
     unknown_album_folders = sorted([folder for folder in os.listdir(unknown_albums_dir)
@@ -783,9 +716,7 @@ def rename_files():
     folder = data.get('folder', '')
 
     # Retrieve the unknown albums directory path from the configuration
-    config = configparser.ConfigParser()
-    config.read(pdscript_conf_path)
-    unknown_albums_dir = config.get('Paths', 'unknown_albums_dir')
+    unknown_albums_dir = get_setting('Paths', 'unknown_albums_dir')
     
     # Construct the full path to the folder
     folder_path = os.path.join(unknown_albums_dir, folder)
@@ -874,10 +805,8 @@ def organize_album():
         genre = data.get('genre', '')  # Genre is already decoded
 
         # Configuration to access paths
-        config = configparser.ConfigParser()
-        config.read(pdscript_conf_path)
-        unknown_albums_dir = config.get('Paths', 'unknown_albums_dir')
-        destination_root = config.get('Paths', 'destination_root')
+        unknown_albums_dir = get_setting('Paths', 'unknown_albums_dir')
+        destination_root = get_setting('Paths', 'destination_root')
 
         # Construct full paths using the values from the request
         full_genre_path = os.path.join(unknown_albums_dir, genre)
@@ -997,8 +926,7 @@ def track_preview(track_id):
 @app.route('/create_artist')
 def create_artist():
     """Display the form to create a new artist with genre selection."""
-    settings = read_pdscript_conf()
-    destination_root = settings['destination_root']
+    destination_root = get_setting('Paths', 'destination_root')
     
     # List genres (subdirectories inside destination_root)
     try:
@@ -1021,8 +949,7 @@ def submit_artist():
         return jsonify({'error': 'Artist name and genre cannot be blank'}), 400
 
     # Read the configuration to get the destination_root path
-    settings = read_pdscript_conf()
-    destination_root = settings['destination_root']
+    destination_root = get_setting('Paths', 'destination_root')
 
     # Sanitize the artist name to remove special characters
     safe_artist_name = clean_special_chars(artist_name)
@@ -1040,10 +967,13 @@ def submit_artist():
 
 @app.route('/scan_jellyfin_library', methods=['POST'])
 def scan_jellyfin_library():
-    settings = read_pdscript_conf()
-    url = f"{settings['api_base_url']}/Items/{settings['main_music_library_id']}/Refresh?Recursive=true&ImageRefreshMode=Default&MetadataRefreshMode=Default&ReplaceAllImages=false&ReplaceAllMetadata=false"
+    api_base_url = get_setting('Jellyfin', 'api_base_url')
+    main_music_library_id = get_setting('Jellyfin', 'main_music_library_id')
+    api_auth_token = get_setting('Jellyfin', 'api_auth_token')
+    
+    url = f"{api_base_url}/Items/{main_music_library_id}/Refresh?Recursive=true&ImageRefreshMode=Default&MetadataRefreshMode=Default&ReplaceAllImages=false&ReplaceAllMetadata=false"
     headers = {
-        'Authorization': f"MediaBrowser Token={settings['api_auth_token']}",
+        'Authorization': f"MediaBrowser Token={api_auth_token}",
         'Accept': 'application/json'
     }
 
@@ -1059,9 +989,7 @@ def get_artists_by_genre():
     if not genre:
         return jsonify({'error': 'Genre parameter is missing'}), 400
 
-    # Assuming 'destination_root' is stored in a configuration or to be set as a constant
-    config = read_pdscript_conf()  # Or however you fetch your configuration
-    destination_root = config['destination_root']  # Ensure this is the correct key
+    destination_root = get_setting('Paths', 'destination_root')
 
     # Construct the path to the genre directory
     genre_path = os.path.join(destination_root, genre)
@@ -1075,15 +1003,6 @@ def get_artists_by_genre():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# Load the pdscript configuration to get Jellyfin details
-def get_pdscript_config():
-    config = configparser.ConfigParser()
-    config.read(pdscript_conf_path)
-    return {
-        'api_base_url': config.get('API Details', 'API_BASE_URL'),
-        'api_auth_token': config.get('API Details', 'API_AUTH_TOKEN')
-    }
-
 @app.route('/jellyfin_check_artist', methods=['GET'])
 def jellyfin_check_artist():
     artist_name = request.args.get('artist')
@@ -1091,12 +1010,12 @@ def jellyfin_check_artist():
         return "Artist name is required.", 400
 
     # Load Jellyfin API settings from config
-    jellyfin_config = get_pdscript_config()
-    base_url = jellyfin_config['api_base_url']
-    token = jellyfin_config['api_auth_token']
+    base_url = get_setting('Jellyfin', 'api_base_url')
+    token = get_setting('Jellyfin', 'api_auth_token')
+    userId = get_setting('Jellyfin', 'user_id')
 
     # Search for the artist in Jellyfin
-    search_url = f"{base_url}/Artists?searchTerm={artist_name}&Limit=100&Fields=PrimaryImageAspectRatio,CanDelete,MediaSourceCount&Recursive=true&EnableTotalRecordCount=false&ImageTypeLimit=1&IncludePeople=false&IncludeMedia=false&IncludeGenres=false&IncludeStudios=false&IncludeArtists=true&userId=271ccedecfc548bdadc29720845d8e8d"
+    search_url = f"{base_url}/Artists?searchTerm={artist_name}&Limit=100&Fields=PrimaryImageAspectRatio,CanDelete,MediaSourceCount&Recursive=true&EnableTotalRecordCount=false&ImageTypeLimit=1&IncludePeople=false&IncludeMedia=false&IncludeGenres=false&IncludeStudios=false&IncludeArtists=true&userId={userId}"
     headers = {
         'Authorization': f'MediaBrowser Token={token}',
         'accept': 'application/json',
@@ -1146,9 +1065,8 @@ def jellyfin_check_artist():
 @app.route('/jellyfin_image/<album_id>/<image_tag>', methods=['GET'])
 def jellyfin_image(album_id, image_tag):
     # Load Jellyfin API settings from config
-    jellyfin_config = get_pdscript_config()
-    base_url = jellyfin_config['api_base_url']
-    token = jellyfin_config['api_auth_token']
+    base_url = get_setting('Jellyfin', 'api_base_url')
+    token = get_setting('Jellyfin', 'api_auth_token')
 
     # Construct the image URL
     image_url = f"{base_url}/Items/{album_id}/Images/Primary?fillHeight=271&fillWidth=271&quality=96&tag={image_tag}"
@@ -1169,9 +1087,8 @@ def jellyfin_image(album_id, image_tag):
 @app.route('/jellyfinalbumtracks/<string:album_id>', methods=['GET'])
 def jellyfin_album_tracks(album_id):
     # Load Jellyfin API settings from config
-    jellyfin_config = get_pdscript_config()
-    base_url = jellyfin_config['api_base_url']
-    token = jellyfin_config['api_auth_token']
+    base_url = get_setting('Jellyfin', 'api_base_url')
+    token = get_setting('Jellyfin', 'api_auth_token')
 
     headers = {
         'Authorization': f'MediaBrowser Token={token}',
@@ -1209,6 +1126,8 @@ def jellyfin_album_tracks(album_id):
 
     # Step 3: Render the template with the complete album and track information
     return render_template('jellyfin_album_tracks.html', album=album_data, tracks=track_info)
+
+
 # Define a helper function to safely access and modify active_downloads
 def safe_update_command(command_id, updates):
     """Safely updates the active_downloads dictionary."""
@@ -1220,43 +1139,58 @@ def safe_update_command(command_id, updates):
 # Modified function to execute a command and provide real-time output
 def execute_command(command_id, command):
     """Function to execute a command using pexpect in a new thread."""
-    # Mark the command as running
     safe_update_command(command_id, {'status': 'running'})
+    logging.info(f"[{command_id}] Starting command: {command}")
 
     try:
-        # Start the interactive process with pexpect
         process = pexpect.spawn(command, encoding='utf-8', timeout=None)
-
-        # Attach the process to active_downloads for interaction
         safe_update_command(command_id, {'process': process, 'output': []})
 
-        # Read stdout and stderr output line by line
+        process.logfile_read = sys.stdout
+
         while True:
             try:
-                # Readline reads the output as it becomes available
-                output = process.readline().strip()
+                # Use read_nonblocking for real-time output
+                output = process.read_nonblocking(size=1024, timeout=0.1)
                 if output:
                     with command_lock:
-                        active_downloads[command_id]['output'].append(output)
-
+                        # To handle carriage returns and screen clearing, we can process the output
+                        # This is a simple implementation. A more robust one might be needed for complex cases.
+                        cleaned_output = ansi_escape.sub('', output).strip()
+                        if cleaned_output:
+                             active_downloads[command_id]['output'].append(cleaned_output)
+            except pexpect.exceptions.TIMEOUT:
+                # No output received in the timeout period, continue loop
+                if not process.isalive():
+                    logging.info(f"[{command_id}] Process finished (detected by isalive).")
+                    break
+                continue
             except pexpect.exceptions.EOF:
-                break  # Process finished
+                logging.info(f"[{command_id}] Process finished (EOF).")
+                break
             except Exception as e:
+                logging.error(f"[{command_id}] Error while reading command output: {str(e)}")
                 with command_lock:
                     active_downloads[command_id]['output'].append(f"Error while reading command output: {str(e)}")
-
-        # Determine the final status of the command
+                break
+        
+        process.close()
         return_code = process.exitstatus
+        signal_code = process.signalstatus
+        
+        logging.info(f"[{command_id}] Process exited with code: {return_code}, signal: {signal_code}")
+
+        terminate_command(command_id)
+
         new_status = 'completed' if return_code == 0 else 'error'
         safe_update_command(command_id, {'status': new_status})
 
+    except Exception as e:
+        logging.error(f"[{command_id}] Failed to execute command: {e}")
+        safe_update_command(command_id, {'status': 'error', 'output': [str(e)]})
     finally:
-        # Ensure the process is properly terminated
-        if process.isalive():
-            process.terminate()
-
-        # After command termination or completion, run post-processing
-        run_post_processing()
+        logging.info(f"[{command_id}] Execution block finished. Running post-processing.")
+        run_post_processing(command_id)
 
 # Initialize the queue handler thread if not already running
 def initialize_queue_handler():
@@ -1302,7 +1236,7 @@ def download_track():
     command_id = str(uuid.uuid4())
     
     # Corrected call with proper variable names
-    command = construct_track_download_command(sldlPath, sldlConfigPath, artist_name, album_name, track_name, command_id)
+    command = construct_track_download_command(sldlPath, artist_name, album_name, track_name, command_id)
 
     # Add to active downloads or queue
     download_info = {
@@ -1337,7 +1271,7 @@ def download_album():
 
     command_id = str(uuid.uuid4())
     # Construct the command with dynamic total tracks
-    command = construct_album_download_command(sldlPath, sldlConfigPath, artist_name, album_name, total_tracks, command_id)
+    command = construct_album_download_command(sldlPath, artist_name, album_name, total_tracks, command_id)
     
     # Add to active downloads or queue
     download_info = {
@@ -1363,7 +1297,7 @@ def download_artist():
         return jsonify({'status': 'error', 'message': 'Artist name is required.'}), 400
 
     command_id = str(uuid.uuid4())    
-    command = construct_artist_download_command(sldlPath, sldlConfigPath, artist_name, command_id)
+    command = construct_artist_download_command(sldlPath, artist_name, command_id)
 
 
     # Add to active downloads or queue
@@ -1385,21 +1319,51 @@ def download_playlist():
     if not playlist_id:
         return jsonify({'status': 'error', 'message': 'Playlist ID is required.'}), 400
 
+    access_token = ensure_valid_token()
+    if not access_token or not isinstance(access_token, str):
+        if hasattr(access_token, 'status_code'):
+             return access_token # Forward the redirect
+        return jsonify({'status': 'error', 'message': 'Valid Spotify token is required.'}), 401
+
+    # Get playlist name from Spotify
+    headers = {'Authorization': f'Bearer {access_token}'}
+    playlist_url = f'https://api.spotify.com/v1/playlists/{playlist_id}'
+    playlist_response = requests.get(playlist_url, headers=headers)
+    if playlist_response.status_code != 200:
+        return jsonify({'status': 'error', 'message': 'Failed to fetch playlist details from Spotify.'}), 500
+    
+    playlist_name = playlist_response.json().get('name', f'spotify_playlist_{playlist_id}')
+    sanitized_playlist_name = re.sub(r'[^\w\s-]', '', playlist_name).strip()
+
+    # Get download path from config
+    download_path = get_setting('Paths', 'music_download_folder', '/app/downloads')
+
+    output_path = os.path.join(download_path, sanitized_playlist_name)
+    
+    # Create playlist folder and marker file
+    try:
+        os.makedirs(output_path, exist_ok=True)
+        with open(os.path.join(output_path, '.is_playlist'), 'w') as f:
+            pass
+    except Exception as e:
+        logging.error(f"Could not create playlist directory or marker file: {e}")
+    
     command_id = str(uuid.uuid4())
-    command = construct_playlist_download_command(sldlPath, sldlConfigPath, playlist_id, command_id)
+    command = construct_playlist_download_command(sldlPath, playlist_id, command_id)
 
-
-    # Add to active downloads or queue
     download_info = {
         'command': command,
         'status': 'queued',
         'type': 'playlist',
         'playlist_id': playlist_id,
+        'access_token': access_token,
         'output': [],
         'start_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
+    logging.info(f"[{command_id}] Storing download info. Token starts with: {access_token[:10]}")
     add_to_queue(command_id, command, download_info)
-    return jsonify({'status': 'success', 'command_id': command_id, 'message': 'Download added to queue.'}), 200
+    
+    return jsonify({'status': 'success', 'command_id': command_id, 'message': f'Download for playlist "{playlist_name}" added to queue.'}), 200
 
 # Flask route to display the interactive download console
 @app.route('/interactive_download_console/<command_id>', methods=['GET'])
@@ -1462,65 +1426,59 @@ def send_console_input(command_id):
 @app.route('/terminate_command/<command_id>', methods=['POST'])
 def terminate_command(command_id):
     """Terminate the process associated with a command ID."""
+    logging.info(f"[{command_id}] Received termination request.")
     with command_lock:
         command_info = active_downloads.get(command_id)
 
     if not command_info:
+        logging.warning(f"[{command_id}] Termination request for a command that does not exist.")
         return jsonify({'error': 'No command found with the given ID'}), 404
 
     if command_info['status'] == 'running':
-        # Terminate the running process
         process = command_info.get('process')
-        try:
-            if process.isalive():
-                process.terminate()
-            safe_update_command(command_id, {'status': 'terminated'})
+        if process and process.isalive():
+            logging.info(f"[{command_id}] Terminating running process (PID: {process.pid}).")
+            try:
+                process.terminate(force=True) # force=True sends SIGKILL
+                logging.info(f"[{command_id}] Process terminated.")
+            except Exception as e:
+                logging.error(f"[{command_id}] Failed to terminate process: {str(e)}")
+                return jsonify({'error': f"Failed to terminate process: {str(e)}"}), 500
+        else:
+            logging.info(f"[{command_id}] Process was already finished or doesn't exist.")
 
-            # Run post-processing after the termination of the command
-            run_post_processing()
-
-            return jsonify({'status': 'success', 'message': 'Process terminated successfully'})
-        except Exception as e:
-            return jsonify({'error': f"Failed to terminate process: {str(e)}"}), 500
+        safe_update_command(command_id, {'status': 'terminated'})
+        logging.info(f"[{command_id}] Running post-processing after termination.")
+        run_post_processing(command_id)
+        return jsonify({'status': 'success', 'message': 'Process terminated successfully'})
 
     elif command_info['status'] == 'queued':
-        # Remove from queue
+        logging.info(f"[{command_id}] Removing queued command.")
         with download_lock:
-            for idx, (queued_id, _) in enumerate(download_queue):
-                if queued_id == command_id:
-                    del download_queue[idx]
-                    break
-            safe_update_command(command_id, {'status': 'terminated'})
-
-
+            download_queue[:] = [item for item in download_queue if item[0] != command_id]
+        safe_update_command(command_id, {'status': 'terminated'})
         return jsonify({'status': 'success', 'message': 'Queued command terminated successfully'})
 
+    logging.info(f"[{command_id}] No active process to terminate or command already completed.")
     return jsonify({'error': 'No active process to terminate or already completed'}), 400
 
 @app.route('/complete_download/<command_id>', methods=['POST'])
 def complete_download(command_id):
-    """Handles the notification when a download completes and triggers termination."""
-    with command_lock:
-        command_info = active_downloads.get(command_id)
+    """
+    Handles the notification from sldl that a download is complete.
+    This now triggers the termination sequence, which will run post-processing.
+    """
+    logging.info(f"[{command_id}] Received completion notification from sldl.")
 
-    if not command_info:
-        return jsonify({'error': 'No command found with the given ID'}), 404
+    command_info = active_downloads.get(command_id)
 
-    if command_info['status'] == 'running':
-        # Call terminate_command to terminate the process
-        return terminate_command(command_id)
-    elif command_info['status'] == 'queued':
-        # If the command was still queued, it should be removed from the queue
-        with download_lock:
-            for idx, (queued_id, _) in enumerate(download_queue):
-                if queued_id == command_id:
-                    del download_queue[idx]
-                    break
-            safe_update_command(command_id, {'status': 'terminated'})
-
-        return jsonify({'status': 'success', 'message': f'Queued command {command_id} marked as completed and removed'}), 200
-
-    return jsonify({'error': 'No active process to terminate or already completed'}), 400
+    logging.info(f"[{command_id}] Command info: {command_info}")
+    
+    # It's crucial to terminate the command here to trigger the 'finally' block
+    # in 'execute_command', which runs the post-processing.
+    # NOTE: IT WILL BE TERMINATED WHEN PROCESS EXIT, TO PREVENT EARLY EXIT WHEN DOWNLOADING PLAYLIST
+    # return terminate_command(command_id)
+    return jsonify({'status': 'success', 'message': f'Command {command_id} marked as complete.'}), 200
 
 
 
@@ -1571,5 +1529,15 @@ def download_output(command_id):
     return jsonify({'output': command_info['output'], 'status': command_info['status']})
 
 if __name__ == '__main__':
+    # Generate sldl.conf on startup
+    generate_sldl_config()
+    
+    # Get SSL settings from config
+    ssl_cert = get_setting('Server', 'ssl_cert_path', fallback=None)
+    ssl_key = get_setting('Server', 'ssl_key_path', fallback=None)
+    ssl_context = None
+    if ssl_cert and ssl_key:
+        ssl_context = (ssl_cert, ssl_key)
+
     # Run the Flask app
-    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, ssl_context=ssl_context)

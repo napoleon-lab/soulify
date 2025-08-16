@@ -1,0 +1,9 @@
+config.ini
+config.ini.private
+music
+download
+__pycache__
+jellyfin
+*.crt
+*.key
+.*

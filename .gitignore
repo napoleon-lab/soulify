@@ -1,0 +1,10 @@
+.venv
+download
+__pycache__
+music
+jellyfin
+*.crt
+*.key
+config.ini.private
+
+.*
