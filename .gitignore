@@ -8,3 +8,6 @@ jellyfin
 config.ini.private
 
 .*
+
+!.github
+!.github/**
