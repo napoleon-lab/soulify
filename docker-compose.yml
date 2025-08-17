@@ -12,9 +12,8 @@ services:
       - ./music/downloads:/app/downloads
       - ./music/library:/app/music
       - ./.config.ini:/app/config.ini
-      # Optional: Mount your own SSL certs if you have them (match filename with the config values in config.ini)
-      # - ./path/to/your/cert.crt:/app/domain.ts.net.crt
-      # - ./path/to/your/key.key:/app/domain.ts.net.key
+      # Mount your own SSL certs if you have them (match filename with the config values in config.ini)
+      - ./certs:/app/certs
     restart: unless-stopped
     # environment:
       # Example of overriding a config value with an environment variable

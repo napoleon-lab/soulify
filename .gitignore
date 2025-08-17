@@ -6,6 +6,7 @@ jellyfin
 *.crt
 *.key
 config.ini.private
+certs
 
 .*
 

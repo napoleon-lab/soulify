@@ -1,5 +1,23 @@
 See the upstream for details https://github.com/WB2024/soulify
 
+## Features
+
+- Download Spotify playlists by URL.
+- Browse and play your Spotify playlists.
+- Search for artists, albums, and tracks on Spotify.
+- Download individual tracks, albums, or an artist's entire discography.
+- Manage your music library with post-download processing, including metadata updates and Jellyfin integration.
+
+## Screenshots
+
+| Home | Playlists | Playlist Tracks |
+| --- | --- | --- |
+| ![screenshot_home.png](static/images/screenshot_home.png) | ![screenshot_playlists.png](static/images/screenshot_playlists.png) | ![screenshot_playliststracks.png](static/images/screenshot_playliststracks.png) |
+
+| Search | Search Results | Download Management |
+| --- | --- | --- |
+| ![screenshot_search.png](static/images/screenshot_search.png) | ![screenshot_search.png](static/images/screenshot_search.png) | ![screenshot_downloadManagment.png](static/images/screenshot_downloadManagment.png) |
+
 ## Docker Deployment
 
 The easiest way to get Soulify running is with Docker.

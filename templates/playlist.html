@@ -69,6 +69,24 @@
         .download button:hover {
             background-color: #1aa34a;
         }
+        .download-section {
+            padding: 20px;
+            text-align: center;
+        }
+        .download-section input {
+            padding: 10px;
+            width: 300px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+        .download-section button {
+            padding: 10px 20px;
+            background-color: #1DB954;
+            border: none;
+            color: white;
+            cursor: pointer;
+            border-radius: 5px;
+        }
     </style>
 
     <script>
@@ -103,6 +121,14 @@
 <body>
     {% include 'nav.html' %}
     <h1>My Playlists</h1>
+
+    <div class="download-section">
+        <form id="download-form">
+            <input type="text" id="playlist-url" placeholder="Enter Spotify Playlist URL" required>
+            <button type="submit">Download</button>
+        </form>
+    </div>
+
     <div class="grid">
         {% for playlist in playlists %}
         <div class="playlist">
@@ -117,6 +143,15 @@
         </div>
         {% endfor %}
     </div>
+
+    <script>
+        document.getElementById('download-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+            const playlistUrl = document.getElementById('playlist-url').value;
+            const playlistId = playlistUrl.split('/').pop().split('?')[0];
+            downloadPlaylist(playlistId);
+        });
+    </script>
 </body>
 </html>
 
