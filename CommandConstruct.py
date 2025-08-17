@@ -41,7 +41,7 @@ def construct_track_download_command(sldlPath, artistName, albumName, trackName,
     on_complete_url = f"{base_url}/complete_download/{command_id}"
 
     return (f'"{sldlPath}" "artist={cleaned_artist_name}, album={cleaned_album_name}, title={cleaned_track_name}" '
-            f'--album --interactive --strict-title --config "{SLDL_CONFIG_PATH}" --debug --yt-dlp --on-complete "curl -kX POST {on_complete_url}"')
+            f'--album --interactive --strict-title --config "{SLDL_CONFIG_PATH}" --debug  --on-complete "curl -kX POST {on_complete_url}"')
 
 
 def construct_album_download_command(sldlPath, artistName, albumName, totalTracks, command_id):
@@ -50,7 +50,7 @@ def construct_album_download_command(sldlPath, artistName, albumName, totalTrack
     base_url = get_base_url()
     on_complete_url = f"{base_url}/complete_download/{command_id}"
     return (f'"{sldlPath}" "artist={cleaned_artist_name}, album={cleaned_album_name}" --album-track-count {totalTracks} '
-            f'--album --interactive --config "{SLDL_CONFIG_PATH}" --debug --yt-dlp --on-complete "curl -kX POST {on_complete_url}"')
+            f'--album --interactive --config "{SLDL_CONFIG_PATH}" --debug  --on-complete "curl -kX POST {on_complete_url}"')
 
 def construct_artist_download_command(sldlPath, artistName, command_id):
     cleaned_artist_name = clean_special_chars(artistName)
@@ -58,7 +58,7 @@ def construct_artist_download_command(sldlPath, artistName, command_id):
     on_complete_url = f"{base_url}/complete_download/{command_id}"
     return (f'"{sldlPath}" "artist={cleaned_artist_name}" '
             f'--aggregate --album --interactive --config "{SLDL_CONFIG_PATH}" '
-            f'--debug --yt-dlp --on-complete "curl -kX POST {on_complete_url}"')
+            f'--debug  --on-complete "curl -kX POST {on_complete_url}"')
 
 def construct_playlist_download_command(sldlPath, playlistID, command_id):
     base_url = get_base_url()
@@ -66,6 +66,6 @@ def construct_playlist_download_command(sldlPath, playlistID, command_id):
 
     print(f"URL on download complete: {on_complete_url}")
     return (f'"{sldlPath}" "https://open.spotify.com/playlist/{playlistID}" '
-            f'--config "{SLDL_CONFIG_PATH}" --no-remove-special-chars '
-            f'--debug --write-playlist --yt-dlp --on-complete "curl -kX POST {on_complete_url}"')
+            f'--config "{SLDL_CONFIG_PATH}" '
+            f'--debug --write-playlist  --on-complete "curl -kX POST {on_complete_url}"')
 
