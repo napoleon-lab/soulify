@@ -193,22 +193,33 @@ def index():
 
 @app.route('/playlists')
 def playlists():
-    """List the user's Spotify playlists."""
+    """List the user's Spotify playlists or search for playlists."""
     access_token = ensure_valid_token()
     if not access_token:
         return redirect(url_for('login'))
 
     headers = {'Authorization': f'Bearer {access_token}'}
-    url = "https://api.spotify.com/v1/me/playlists?limit=50&offset=0"
-    playlists = []
-    while url:
+    search_query = request.args.get('search_query')
+
+    if search_query:
+        url = f"https://api.spotify.com/v1/search?q={urllib.parse.quote(search_query)}&type=playlist&limit=50"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             data = response.json()
-            playlists.extend(data['items'])
-            url = data['next']  # Next page URL
+            playlists = data.get('playlists', {}).get('items', [])
         else:
             return f"Error fetching playlists: {response.json()}"
+    else:
+        url = "https://api.spotify.com/v1/me/playlists?limit=50&offset=0"
+        playlists = []
+        while url:
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                playlists.extend(data['items'])
+                url = data['next']  # Next page URL
+            else:
+                return f"Error fetching playlists: {response.json()}"
 
     return render_template('playlist.html', playlists=playlists)
 
