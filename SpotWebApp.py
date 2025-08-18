@@ -183,6 +183,25 @@ def refresh_spotify_token():
         return True
     return False  # If refresh fails
 
+def get_client_credentials_token():
+    """Gets a token using client credentials flow."""
+    headers = {
+        'Authorization': 'Basic ' + base64.b64encode(f"{CLIENT_ID}:{CLIENT_SECRET}".encode()).decode(),
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    data = {'grant_type': 'client_credentials'}
+    response = requests.post(SPOTIFY_TOKEN_URL, headers=headers, data=data)
+    if response.status_code == 200:
+        return response.json()['access_token']
+    return None
+
+def get_token():
+    """Gets a user token if available, otherwise gets a client token."""
+    if 'access_token' in session:
+        return ensure_valid_token()
+    return get_client_credentials_token()
+
+
 @app.route('/')
 def index():
     """Home route."""
@@ -194,12 +213,13 @@ def index():
 @app.route('/playlists')
 def playlists():
     """List the user's Spotify playlists or search for playlists."""
-    access_token = ensure_valid_token()
+    access_token = get_token()
     if not access_token:
-        return redirect(url_for('login'))
+        return "Could not authenticate with Spotify.", 401
 
     headers = {'Authorization': f'Bearer {access_token}'}
     search_query = request.args.get('search_query')
+    playlists = []
 
     if search_query:
         url = f"https://api.spotify.com/v1/search?q={urllib.parse.quote(search_query)}&type=playlist&limit=50"
@@ -209,17 +229,16 @@ def playlists():
             playlists = data.get('playlists', {}).get('items', [])
         else:
             return f"Error fetching playlists: {response.json()}"
-    else:
+    elif 'access_token' in session:
         url = "https://api.spotify.com/v1/me/playlists?limit=50&offset=0"
-        playlists = []
         while url:
             response = requests.get(url, headers=headers)
             if response.status_code == 200:
                 data = response.json()
                 playlists.extend(data['items'])
-                url = data['next']  # Next page URL
+                url = data['next']
             else:
-                return f"Error fetching playlists: {response.json()}"
+                return f"Error fetching user playlists: {response.json()}"
 
     return render_template('playlist.html', playlists=playlists)
 
@@ -1330,11 +1349,9 @@ def download_playlist():
     if not playlist_id:
         return jsonify({'status': 'error', 'message': 'Playlist ID is required.'}), 400
 
-    access_token = ensure_valid_token()
-    if not access_token or not isinstance(access_token, str):
-        if hasattr(access_token, 'status_code'):
-             return access_token # Forward the redirect
-        return jsonify({'status': 'error', 'message': 'Valid Spotify token is required.'}), 401
+    access_token = get_token()
+    if not access_token:
+        return jsonify({'status': 'error', 'message': 'Could not authenticate with Spotify.'}), 401
 
     # Get playlist name from Spotify
     headers = {'Authorization': f'Bearer {access_token}'}
