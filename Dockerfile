@@ -13,6 +13,11 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends libicu-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      libicu-dev curl ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN mkdir -p /app/bin && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /app/bin/yt-dlp && chmod a+rx /app/bin/yt-dlp
 
 # Copy requirements first for better caching

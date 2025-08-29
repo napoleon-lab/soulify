@@ -53,5 +53,5 @@ def generate_sldl_config():
         # Add all other settings from the [sLDL] section
         if config.has_section('sLDL'):
             f.write("\n# sLDL Specific Settings\n")
-            for key, value in config.items('sLDL'):
+            for key, value in config.items('sLDL', raw=True):
                 f.write(f"{key} = {value}\n")

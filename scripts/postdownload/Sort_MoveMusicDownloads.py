@@ -499,7 +499,11 @@ def create_jellyfin_playlist(playlist_name, song_files, api_base_url, headers, u
         return None
 
 def move_playlist_folders():
-    music_extensions = {'.mp3', '.flac', '.m4a', '.wav', '.ogg', '.aac', '.wma'}
+    music_extensions = {
+        '.mp3', '.flac', '.m4a', '.wav',
+        '.ogg', '.aac', '.wma',
+        '.webm', '.opus', '.mka'
+    }
 
     download_path_clean = str(download_path).strip('"').strip("'").rstrip('/')
     logging.info(f"Cleaned download_path: {repr(download_path_clean)}")
