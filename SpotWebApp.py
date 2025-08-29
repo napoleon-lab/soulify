@@ -56,6 +56,7 @@ logging.basicConfig(
 
 # Store information about active downloads
 active_downloads = {}
+command_history = deque(maxlen=10)  # History of last 10 commands
 command_lock = threading.Lock() 
 
 command_processes = {}
@@ -1212,17 +1213,25 @@ def execute_command(command_id, command):
         
         logging.info(f"[{command_id}] Process exited with code: {return_code}, signal: {signal_code}")
 
-        terminate_command(command_id)
-
         new_status = 'completed' if return_code == 0 else 'error'
-        safe_update_command(command_id, {'status': new_status})
+        
+        with app.app_context():
+            safe_update_command(command_id, {'status': new_status})
+            with command_lock:
+                command_info = active_downloads.get(command_id)
+                if command_info:
+                    command_history.append(command_info)
+            run_post_processing(command_id)
+
 
     except Exception as e:
         logging.error(f"[{command_id}] Failed to execute command: {e}")
-        safe_update_command(command_id, {'status': 'error', 'output': [str(e)]})
-    finally:
-        logging.info(f"[{command_id}] Execution block finished. Running post-processing.")
-        run_post_processing(command_id)
+        with app.app_context():
+            safe_update_command(command_id, {'status': 'error', 'output': [str(e)]})
+            with command_lock:
+                command_info = active_downloads.get(command_id)
+                if command_info:
+                    command_history.append(command_info)
 
 # Initialize the queue handler thread if not already running
 def initialize_queue_handler():
@@ -1272,6 +1281,7 @@ def download_track():
 
     # Add to active downloads or queue
     download_info = {
+        'command_id': command_id,
         'command': command,
         'status': 'queued',
         'type': 'track',
@@ -1307,6 +1317,7 @@ def download_album():
     
     # Add to active downloads or queue
     download_info = {
+        'command_id': command_id,
         'command': command,
         'status': 'queued',
         'type': 'album',
@@ -1334,6 +1345,7 @@ def download_artist():
 
     # Add to active downloads or queue
     download_info = {
+        'command_id': command_id,
         'command': command,
         'status': 'queued',
         'type': 'artist',
@@ -1421,6 +1433,7 @@ def _process_playlist_download(playlist_url):
     command = construct_playlist_download_command(sldlPath, playlist_url, command_id)
 
     download_info = {
+        'command_id': command_id,
         'command': command,
         'status': 'queued',
         'type': 'playlist',
@@ -1458,6 +1471,13 @@ def interactive_download_console(command_id):
     """Route to display the interactive download console for a specific command."""
     with command_lock:
         command_info = active_downloads.get(command_id)
+
+    if not command_info:
+        # Check in history
+        for cmd in command_history:
+            if cmd.get('command_id') == command_id:
+                command_info = cmd
+                break
 
     if not command_info:
         return "Command not found.", 404
@@ -1571,6 +1591,13 @@ def update_console_output(command_id):
         command_info = active_downloads.get(command_id)
 
     if not command_info:
+        # Check in history
+        for cmd in command_history:
+            if cmd.get('command_id') == command_id:
+                command_info = cmd
+                break
+    
+    if not command_info:
         logging.info(f"[update_console_output] Command not found: {command_id}")
         return jsonify({'error': 'Command not found'}), 404
 
@@ -1654,6 +1681,7 @@ def terminate_command(command_id):
             logging.info(f"[{command_id}] Process was already finished or doesn't exist.")
 
         safe_update_command(command_id, {'status': 'terminated'})
+        command_history.append(command_info)
         logging.info(f"[{command_id}] Running post-processing after termination.")
         run_post_processing(command_id)
         return jsonify({'status': 'success', 'message': 'Process terminated successfully'})
@@ -1663,6 +1691,7 @@ def terminate_command(command_id):
         with download_lock:
             download_queue[:] = [item for item in download_queue if item[0] != command_id]
         safe_update_command(command_id, {'status': 'terminated'})
+        command_history.append(command_info)
         return jsonify({'status': 'success', 'message': 'Queued command terminated successfully'})
 
     logging.info(f"[{command_id}] No active process to terminate or command already completed.")
@@ -1719,7 +1748,7 @@ def active_downloads_view():
         ]
 
     # Render the active downloads page with both running and queued downloads
-    return render_template('active_downloads.html', running_downloads=running_downloads, queued_downloads=queued_downloads)
+    return render_template('active_downloads.html', running_downloads=running_downloads, queued_downloads=queued_downloads, download_history=list(command_history))
 
 
 # Route to download output

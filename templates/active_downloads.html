@@ -203,6 +203,44 @@
                 {% endif %}
             </tbody>
         </table>
+
+        <h2>Download History (Last 10)</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Command ID</th>
+                    <th>Type</th>
+                    <th>Artist Name</th>
+                    <th>Track/Album Name</th>
+                    <th>Status</th>
+                    <th>Start Time</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if download_history %}
+                    {% for download in download_history %}
+                        <tr>
+                            <td>{{ download.command_id }}</td>
+                            <td>{{ download.type }}</td>
+                            <td>{{ download.artist_name }}</td>
+                            <td>{{ download.track_album_name }}</td>
+                            <td>{{ download.status }}</td>
+                            <td>{{ download.start_time }}</td>
+                            <td>
+                                <div class="actions">
+                                    <a class="view-btn" href="{{ url_for('interactive_download_console', command_id=download.command_id) }}"><i class="fas fa-terminal"></i> View Console</a>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="7" style="text-align: center;">No download history</td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
     </div>
 </body>
 </html>
