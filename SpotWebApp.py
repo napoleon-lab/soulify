@@ -22,6 +22,7 @@ import shutil
 import mutagen
 import queue
 import pexpect
+import json
 from mutagen.easyid3 import EasyID3
 from mutagen.mp3 import MP3
 from mutagen.flac import FLAC
@@ -382,6 +383,7 @@ def search():
             return f"Error fetching search results: {response.json()}"
 
     return render_template('search.html')
+
 
 @app.route('/login')
 def login():
@@ -1345,30 +1347,37 @@ def download_artist():
 @app.route('/download_playlist', methods=['POST'])
 def download_playlist():
     data = request.json
-    playlist_id = data.get('playlistId')
-    if not playlist_id:
-        return jsonify({'status': 'error', 'message': 'Playlist ID is required.'}), 400
+    playlist_url = data.get('playlistUrl')
+    if not playlist_url:
+        return jsonify({'status': 'error', 'message': 'Playlist URL is required.'}), 400
 
-    access_token = get_token()
-    if not access_token:
-        return jsonify({'status': 'error', 'message': 'Could not authenticate with Spotify.'}), 401
+    playlist_name = "downloaded_playlist"
+    if "spotify" in playlist_url:
+        access_token = get_token()
+        if not access_token:
+            return jsonify({'status': 'error', 'message': 'Could not authenticate with Spotify.'}), 401
 
-    # Get playlist name from Spotify
-    headers = {'Authorization': f'Bearer {access_token}'}
-    playlist_url = f'https://api.spotify.com/v1/playlists/{playlist_id}'
-    playlist_response = requests.get(playlist_url, headers=headers)
-    if playlist_response.status_code != 200:
-        return jsonify({'status': 'error', 'message': 'Failed to fetch playlist details from Spotify.'}), 500
-    
-    playlist_name = playlist_response.json().get('name', f'spotify_playlist_{playlist_id}')
+        playlist_id = playlist_url.split('/')[-1].split('?')[0]
+        headers = {'Authorization': f'Bearer {access_token}'}
+        spotify_playlist_url = f'https://api.spotify.com/v1/playlists/{playlist_id}'
+        playlist_response = requests.get(spotify_playlist_url, headers=headers)
+        if playlist_response.status_code != 200:
+            return jsonify({'status': 'error', 'message': 'Failed to fetch playlist details from Spotify.'}), 500
+        
+        playlist_name = playlist_response.json().get('name', f'spotify_playlist_{playlist_id}')
+    else:
+        try:
+            result = subprocess.run(['yt-dlp', '--print', 'title', playlist_url], capture_output=True, text=True, check=True)
+            playlist_name = result.stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            logging.error(f"Failed to get playlist title from yt-dlp: {e}")
+            # Fallback to a generic name if yt-dlp fails
+            playlist_name = "youtube_playlist"
+
     sanitized_playlist_name = re.sub(r'[^\w\s-]', '', playlist_name).strip()
-
-    # Get download path from config
     download_path = get_setting('Paths', 'music_download_folder', '/app/downloads')
-
     output_path = os.path.join(download_path, sanitized_playlist_name)
     
-    # Create playlist folder and marker file
     try:
         os.makedirs(output_path, exist_ok=True)
         with open(os.path.join(output_path, '.is_playlist'), 'w') as f:
@@ -1377,21 +1386,25 @@ def download_playlist():
         logging.error(f"Could not create playlist directory or marker file: {e}")
     
     command_id = str(uuid.uuid4())
-    command = construct_playlist_download_command(sldlPath, playlist_id, command_id)
+    command = construct_playlist_download_command(sldlPath, playlist_url, command_id)
 
     download_info = {
         'command': command,
         'status': 'queued',
         'type': 'playlist',
-        'playlist_id': playlist_id,
-        'access_token': access_token,
+        'playlist_id': playlist_url,
         'output': [],
         'start_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
-    logging.info(f"[{command_id}] Storing download info. Token starts with: {access_token[:10]}")
     add_to_queue(command_id, command, download_info)
     
     return jsonify({'status': 'success', 'command_id': command_id, 'message': f'Download for playlist "{playlist_name}" added to queue.'}), 200
+
+
+@app.route('/youtube')
+def youtube():
+    return render_template('youtube.html')
+
 
 # Flask route to display the interactive download console
 @app.route('/interactive_download_console/<command_id>', methods=['GET'])
@@ -1555,6 +1568,260 @@ def download_output(command_id):
         return jsonify({'error': 'Command not found'}), 404
 
     return jsonify({'output': command_info['output'], 'status': command_info['status']})
+
+
+# YouTube API using yt-dlp
+@app.route('/api/youtube/search/playlist', methods=['POST'])
+def youtube_search_playlist():
+    data = request.json
+    query = data.get('query')
+    if not query:
+        return jsonify({'error': 'Search query is required.'}), 400
+
+    # URL encode the query and construct the search URL for playlists
+    encoded_query = urllib.parse.quote(query)
+    search_url = f"https://www.youtube.com/results?search_query={encoded_query}&sp=EgIQAw%253D%253D"
+
+    # Command to get search results as JSON
+    command = [
+        'yt-dlp',
+        '--dump-single-json',
+        '--flat-playlist',
+        search_url
+    ]
+
+    output = None
+    try:
+        logging.info(f"Running command: {' '.join(command)}")
+        # Using subprocess.run to execute the command
+        result = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8')
+        output = result.stdout
+        logging.info(f"yt-dlp output: {output[:100]}...")  # Log the first 100 characters of the output for debugging
+    except subprocess.CalledProcessError as e:
+        # yt-dlp can exit with a non-zero code if some videos on the page are unavailable.
+        # We can try to parse the output anyway.
+        logging.warning(f"yt-dlp exited with an error, but we will try to parse its output. Stderr: {e.stderr}")
+        if e.stdout:
+            output = e.stdout
+        else:
+            logging.error(f"yt-dlp failed with no output. Stderr: {e.stderr}")
+            return jsonify({'error': 'Failed to search YouTube.', 'details': e.stderr}), 500
+    except FileNotFoundError:
+        logging.error("yt-dlp command not found.")
+        return jsonify({'error': 'yt-dlp is not installed or not in PATH.'}), 500
+    except Exception as e:
+        logging.error(f"An unexpected error occurred when running yt-dlp: {str(e)}")
+        return jsonify({'error': 'An unexpected error occurred.'}), 500
+
+    if not output:
+        return jsonify({'error': 'yt-dlp returned no output.'}), 500
+
+    try:
+        # Parse the JSON output
+        search_data = json.loads(output)
+        
+        playlists = []
+        if 'entries' in search_data:
+            for entry in search_data['entries']:
+                playlist_info = {
+                    'title': entry.get('title', 'Unknown Title'),
+                    'playlist_id': entry.get('id'),
+                    'url': entry.get('url'),
+                    'thumbnails': entry.get('thumbnails', []),
+                    'ie_key': entry.get('ie_key')
+                }
+                
+                # Add thumbnail URL for convenience (get the highest quality one)
+                if playlist_info['thumbnails']:
+                    # Sort by width to get highest quality
+                    sorted_thumbnails = sorted(playlist_info['thumbnails'], 
+                                             key=lambda x: x.get('width', 0), reverse=True)
+                    playlist_info['thumbnail_url'] = sorted_thumbnails[0]['url']
+                else:
+                    playlist_info['thumbnail_url'] = None
+                
+                playlists.append(playlist_info)
+        
+        response_data = {
+            'query': query,
+            'total_results': len(playlists),
+            'playlists': playlists,
+            'search_url': search_url
+        }
+        
+        return jsonify(response_data), 200
+
+
+    except json.JSONDecodeError as e:
+        logging.error(f"Failed to parse yt-dlp JSON output: {e}")
+        return jsonify({'error': 'Failed to parse YouTube search results.'}), 500
+    except Exception as e:
+        logging.error(f"An error occurred during YouTube search result processing: {str(e)}")
+        return jsonify({'error': 'An unexpected error occurred.'}), 500
+
+
+@app.route('/api/youtube/playlist/details', methods=['POST'])
+def youtube_playlist_details():
+    data = request.json
+    url = data.get('url')
+    if not url:
+        return jsonify({'error': 'Playlist URL is required.'}), 400
+
+    command = [
+        'yt-dlp',
+        '--flat-playlist',
+        '--dump-single-json',
+        url
+    ]
+
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8')
+        
+        # The output for a playlist is a single JSON object with an 'entries' key
+        playlist_data = json.loads(result.stdout)
+        
+        videos = []
+        for entry in playlist_data.get('entries', []):
+            videos.append({
+                'title': entry.get('title'),
+                'url': f"https://www.youtube.com/watch?v={entry.get('id')}",
+                'duration': entry.get('duration'),
+                'artist': entry.get('uploader') # Best guess for artist
+            })
+            
+        return jsonify({
+            'playlist_title': playlist_data.get('title'),
+            'videos': videos
+        })
+
+    except subprocess.CalledProcessError as e:
+        logging.error(f"yt-dlp failed: {e.stderr}")
+        return jsonify({'error': 'Failed to get playlist details from YouTube.', 'details': e.stderr}), 500
+    except FileNotFoundError:
+        logging.error("yt-dlp command not found.")
+        return jsonify({'error': 'yt-dlp is not installed or not in PATH.'}), 500
+    except json.JSONDecodeError as e:
+        logging.error(f"Failed to parse yt-dlp JSON output: {e}")
+        return jsonify({'error': 'Failed to parse YouTube playlist details.'}), 500
+    except Exception as e:
+        logging.error(f"An error occurred while fetching playlist details: {str(e)}")
+        return jsonify({'error': 'An unexpected error occurred.'}), 500
+
+@app.route('/api/search/playlists', methods=['POST'])
+def search_combined_playlists():
+    data = request.json
+    query = data.get('query')
+    if not query:
+        return jsonify({'error': 'Query parameter is required'}), 400
+
+    spotify_results = []
+    youtube_results = []
+
+    # --- Spotify Search ---
+    access_token = get_token()
+    if access_token:
+        headers = {'Authorization': f'Bearer {access_token}'}
+        spotify_url = f"https://api.spotify.com/v1/search?q={urllib.parse.quote(query)}&type=playlist&limit=10"
+        try:
+            response = requests.get(spotify_url, headers=headers)
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    # Safely handle the response structure
+                    playlists_data = data.get('playlists', {})
+                    if playlists_data and isinstance(playlists_data, dict):
+                        items = playlists_data.get('items', [])
+                        if isinstance(items, list):
+                            for item in items:
+                                if item and 'id' in item and 'name' in item and 'external_urls' in item:
+                                    spotify_results.append({
+                                        'source': 'spotify',
+                                        'playlist_id': item['id'],
+                                        'title': item['name'],
+                                        'url': item['external_urls'].get('spotify', ''),
+                                        'thumbnail_url': item['images'][0]['url'] if item.get('images') else None
+                                    })
+                except Exception as e:
+                    logging.warning(f"Error processing Spotify API response: {e}")
+            else:
+                logging.warning(f"Spotify API returned status code {response.status_code}")
+        except Exception as e:
+            logging.warning(f"Spotify playlist search failed: {e}")
+
+    # --- YouTube Search ---
+    try:
+        encoded_query = urllib.parse.quote(query)
+        search_url = f"https://www.youtube.com/results?search_query={encoded_query}&sp=EgIQAw%253D%253D"
+        result = subprocess.run([
+            'yt-dlp',
+            '--dump-single-json',
+            '--flat-playlist',
+            '--max-downloads', '30',  # Limits to max 30 playlist entries
+            search_url
+        ], capture_output=True, text=True, encoding='utf-8')
+
+        if result.stdout:
+            try:
+                search_data = json.loads(result.stdout)
+                entries = search_data.get('entries', [])
+                if isinstance(entries, list):
+                    # Limit to first 30 results (in case max-downloads doesn't fully handle it)
+                    for entry in entries[:30]:
+                        if entry and 'id' in entry and 'title' in entry and 'url' in entry:
+                            thumbnails = entry.get('thumbnails', [])
+                            thumbnail_url = None
+                            if thumbnails and isinstance(thumbnails, list):
+                                sorted_thumbs = sorted(thumbnails,
+                                                     key=lambda x: x.get('width', 0),
+                                                     reverse=True)
+                                if sorted_thumbs:
+                                    thumbnail_url = sorted_thumbs[0].get('url')
+                            youtube_results.append({
+                                'source': 'youtube',
+                                'playlist_id': entry['id'],
+                                'title': entry['title'],
+                                'url': entry['url'],
+                                'thumbnail_url': thumbnail_url
+                            })
+            except json.JSONDecodeError:
+                logging.warning("Failed to parse YouTube search results as JSON")
+            except Exception as e:
+                logging.warning(f"Error processing YouTube search results: {e}")
+    except subprocess.TimeoutExpired:
+        logging.warning(f"YouTube playlist search timed out after 20 seconds for query: {query}")
+    except Exception as e:
+        logging.warning(f"YouTube playlist search failed: {e}")
+
+    # Combine results
+    all_results = spotify_results + youtube_results
+
+    return jsonify({
+        'query': query,
+        'results': all_results
+    }), 200
+
+@app.route('/api/download/playlist', methods=['POST'])
+def download_playlist_unified():
+    data = request.json
+    source = data.get('source')
+    playlist_id = data.get('playlist_id')
+    playlist_url = data.get('playlist_url', '')
+
+    if not source or source not in ['spotify', 'youtube']:
+        return jsonify({'status': 'error', 'message': 'Source must be "spotify" or "youtube"'}), 400
+
+    if not playlist_id and not playlist_url:
+        return jsonify({'status': 'error', 'message': 'Either playlist_id or playlist_url is required'}), 400
+
+    # Construct URL if not provided
+    if not playlist_url:
+        if source == 'spotify':
+            playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
+        elif source == 'youtube':
+            playlist_url = f"https://www.youtube.com/playlist?list={playlist_id}"
+
+    # Reuse existing /download_playlist logic
+    return download_playlist()
 
 if __name__ == '__main__':
     # Generate sldl.conf on startup

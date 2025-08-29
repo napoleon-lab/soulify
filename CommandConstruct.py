@@ -60,12 +60,12 @@ def construct_artist_download_command(sldlPath, artistName, command_id):
             f'--aggregate --album --interactive --config "{SLDL_CONFIG_PATH}" '
             f'--debug  --on-complete "curl -kX POST {on_complete_url}"')
 
-def construct_playlist_download_command(sldlPath, playlistID, command_id):
+def construct_playlist_download_command(sldlPath, playlist_url, command_id):
     base_url = get_base_url()
     on_complete_url = f"{base_url}/complete_download/{command_id}"
 
     print(f"URL on download complete: {on_complete_url}")
-    return (f'"{sldlPath}" "https://open.spotify.com/playlist/{playlistID}" '
+    return (f'"{sldlPath}" "{playlist_url}" '
             f'--config "{SLDL_CONFIG_PATH}" '
             f'--debug --write-playlist  --on-complete "curl -kX POST {on_complete_url}"')
 
