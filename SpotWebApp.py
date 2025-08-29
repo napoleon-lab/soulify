@@ -1344,47 +1344,79 @@ def download_artist():
     add_to_queue(command_id, command, download_info)
     return jsonify({'status': 'success', 'command_id': command_id, 'message': 'Download added to queue.'}), 200
 
-@app.route('/download_playlist', methods=['POST'])
-def download_playlist():
-    data = request.json
-    playlist_url = data.get('playlistUrl')
+# --- Helper Function (New) ---
+def _process_playlist_download(playlist_url):
+    """Core logic to process and queue a playlist download."""
     if not playlist_url:
-        return jsonify({'status': 'error', 'message': 'Playlist URL is required.'}), 400
+        return {'status': 'error', 'message': 'Playlist URL is required.'}, 400
 
     playlist_name = "downloaded_playlist"
-    if "spotify" in playlist_url:
+    if "spotify.com/playlist/" in playlist_url: # More robust check
         access_token = get_token()
         if not access_token:
-            return jsonify({'status': 'error', 'message': 'Could not authenticate with Spotify.'}), 401
+            return {'status': 'error', 'message': 'Could not authenticate with Spotify.'}, 401
 
+        # Corrected URL construction (removed extra spaces)
         playlist_id = playlist_url.split('/')[-1].split('?')[0]
         headers = {'Authorization': f'Bearer {access_token}'}
-        spotify_playlist_url = f'https://api.spotify.com/v1/playlists/{playlist_id}'
-        playlist_response = requests.get(spotify_playlist_url, headers=headers)
-        if playlist_response.status_code != 200:
-            return jsonify({'status': 'error', 'message': 'Failed to fetch playlist details from Spotify.'}), 500
-        
-        playlist_name = playlist_response.json().get('name', f'spotify_playlist_{playlist_id}')
-    else:
+        spotify_playlist_url = f'https://api.spotify.com/v1/playlists/{playlist_id}' # Fixed URL
         try:
-            result = subprocess.run(['yt-dlp', '--print', 'title', playlist_url], capture_output=True, text=True, check=True)
-            playlist_name = result.stdout.strip()
+            playlist_response = requests.get(spotify_playlist_url, headers=headers)
+            if playlist_response.status_code != 200:
+                 logging.warning(f"Spotify API error ({playlist_response.status_code}) for playlist {playlist_id}: {playlist_response.text}")
+                 # Fallback name if API fails
+                 playlist_name = f'spotify_playlist_{playlist_id}'
+            else:
+                playlist_data = playlist_response.json()
+                playlist_name = playlist_data.get('name', f'spotify_playlist_{playlist_id}')
+        except Exception as e:
+             logging.error(f"Exception fetching Spotify playlist name for {playlist_id}: {e}")
+             # Fallback name if request fails
+             playlist_name = f'spotify_playlist_{playlist_id}'
+
+    elif "youtube.com/playlist?list=" in playlist_url or "youtube.com/watch?v=" in playlist_url: # Basic YouTube check
+        try:
+            # Use yt-dlp to get the playlist title
+            result = subprocess.run(['yt-dlp', '--print', 'title', playlist_url], capture_output=True, text=True, check=True, timeout=30)
+            fetched_name = result.stdout.strip()
+            if fetched_name:
+                playlist_name = fetched_name
+            else:
+                 logging.warning(f"yt-dlp returned empty title for {playlist_url}")
+        except subprocess.TimeoutExpired:
+            logging.warning(f"Timeout fetching YouTube playlist title for {playlist_url}")
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            logging.error(f"Failed to get playlist title from yt-dlp: {e}")
+            logging.warning(f"Failed to get playlist title from yt-dlp for {playlist_url}: {e}")
             # Fallback to a generic name if yt-dlp fails
             playlist_name = "youtube_playlist"
+        except Exception as e:
+             logging.error(f"Unexpected error fetching YouTube playlist name for {playlist_url}: {e}")
+             playlist_name = "youtube_playlist"
+    else:
+         logging.warning(f"Unknown playlist URL format: {playlist_url}")
+         playlist_name = "unknown_playlist"
 
-    sanitized_playlist_name = re.sub(r'[^\w\s-]', '', playlist_name).strip()
+
+    sanitized_playlist_name = re.sub(r'[^\w\s\-.\[\](){}]', '', playlist_name).strip() # Slightly more permissive sanitization
+    # Handle case where sanitization removes everything
+    if not sanitized_playlist_name:
+        sanitized_playlist_name = f"playlist_{uuid.uuid4().hex[:8]}"
+
     download_path = get_setting('Paths', 'music_download_folder', '/app/downloads')
     output_path = os.path.join(download_path, sanitized_playlist_name)
-    
+
     try:
         os.makedirs(output_path, exist_ok=True)
-        with open(os.path.join(output_path, '.is_playlist'), 'w') as f:
-            pass
+        marker_file_path = os.path.join(output_path, '.is_playlist')
+        # Only create marker if it doesn't exist
+        if not os.path.exists(marker_file_path):
+            with open(marker_file_path, 'w') as f:
+                pass
     except Exception as e:
-        logging.error(f"Could not create playlist directory or marker file: {e}")
-    
+        error_msg = f"Could not create playlist directory or marker file '{output_path}': {e}"
+        logging.error(error_msg)
+        return {'status': 'error', 'message': error_msg}, 500
+
     command_id = str(uuid.uuid4())
     command = construct_playlist_download_command(sldlPath, playlist_url, command_id)
 
@@ -1392,13 +1424,27 @@ def download_playlist():
         'command': command,
         'status': 'queued',
         'type': 'playlist',
-        'playlist_id': playlist_url,
+        'playlist_id': playlist_url, # Consider if storing the ID separately for Spotify is better
         'output': [],
         'start_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
     add_to_queue(command_id, command, download_info)
-    
-    return jsonify({'status': 'success', 'command_id': command_id, 'message': f'Download for playlist "{playlist_name}" added to queue.'}), 200
+
+    return {'status': 'success', 'command_id': command_id, 'message': f'Download for playlist "{playlist_name}" added to queue.'}, 200
+
+
+# --- Existing Route (Modified) ---
+@app.route('/download_playlist', methods=['POST'])
+def download_playlist():
+    """Original endpoint expecting 'playlistUrl' in JSON."""
+    data = request.json
+    playlist_url = data.get('playlistUrl') # Expecting 'playlistUrl' key
+
+    # Call the helper function
+    response_data, status_code = _process_playlist_download(playlist_url)
+    return jsonify(response_data), status_code
+
+
 
 
 @app.route('/youtube')
@@ -1418,18 +1464,137 @@ def interactive_download_console(command_id):
 
     return render_template('interactive_download_console.html', command_id=command_id, command_info=command_info)
 
+def _calculate_playlist_progress(command_id, output_lines):
+    # logging.warning(f"[_calculate_playlist_progress] output_lines type: {type(output_lines).__name__}")
+    # logging.warning(f"[_calculate_playlist_progress] output_lines demo: {output_lines[:5]}... (total {len(output_lines)} lines)")
+    # logging.warning(f"[_calculate_playlist_progress] Join demo: {"/////".join(output_lines[:5])}")
+    logging.info(f"[_calculate_playlist_progress] Calculating progress for command_id: {command_id}")
 
-# Endpoint to get real-time output from the process
+    if not output_lines:
+        logging.warning(f"[_calculate_playlist_progress] No output lines for command_id: {command_id}")
+        return {
+            'overall_progress_percent': None,
+            'completed_tracks': None,
+            'total_tracks': None,
+            'current_track_progress': None
+        }
+
+    total_tracks = None
+    completed_tracks = 0
+    current_track_progress = 0
+    processed_tracks_identifiers = set() # Use a set to store unique identifiers
+
+    # 2. Find completed tracks using the provided regex
+    # Join lines to handle potential matches split across lines (though less likely here)
+    # More importantly, this makes finding *all* matches easier.
+    full_output_text = "\n".join(output_lines)
+
+    # 1. Find total tracks by searching the entire output text
+    # Look for "Downloading X tracks:" anywhere in the output
+    total_tracks_match = re.search(r"Downloading\s+(\d+)\s+tracks\b", full_output_text)
+    if total_tracks_match:
+        total_tracks = int(total_tracks_match.group(1))
+        logging.debug(f"[_calculate_playlist_progress] Found total tracks: {total_tracks}")
+    else:
+        logging.warning(f"[_calculate_playlist_progress] Could not find total tracks for command_id: {command_id} in full output.")
+        # Couldn't find total tracks, cannot calculate
+        return {
+            'overall_progress_percent': None,
+            'completed_tracks': None,
+            'total_tracks': None,
+            'current_track_progress': None
+        }
+        
+    # Use the regex you provided to find all "Succeeded:" lines
+    # The regex captures the part after "Succeeded:" but before the final "(100%"
+    # We can use this captured part as a unique identifier for the track download attempt.
+    success_pattern = re.compile(r"Succeeded:([^%]*?)\(100\s*%\)") # Non-greedy, capture group 1
+
+    found_successes = success_pattern.findall(full_output_text)
+    logging.debug(f"[_calculate_playlist_progress] Found {len(found_successes)} potential success markers.")
+
+    for identifier_part in found_successes:
+        # The identifier_part might contain the filename or user/share details.
+        # Let's clean it slightly to make it a more robust key, focusing on the filename/user part.
+        # Example identifier_part: "     soon-flower\\..\\04 Arde la ciudad.mp3 [253s/128kbps/3.9M "
+        # We can strip whitespace and take a significant part, or hash it.
+        # Stripping and using the core part should be sufficient for uniqueness in most cases.
+        clean_identifier = identifier_part.strip()
+        if clean_identifier and clean_identifier not in processed_tracks_identifiers:
+             completed_tracks += 1
+             processed_tracks_identifiers.add(clean_identifier)
+             logging.warning(f"[_calculate_playlist_progress] Counted completed track: '{clean_identifier}'")
+
+    logging.debug(f"[_calculate_playlist_progress] Total unique completed tracks counted: {completed_tracks}")
+
+    # 3. Find latest current track progress
+    # Look for the most recent line indicating the progress of *any* track
+    # This regex looks for "InProgress:" followed by anything, then a number in parentheses with %
+    progress_pattern = re.compile(r"InProgress:.*?\((\d+)\s*%\s*\)")
+    # Search the full text again
+    all_progress_matches = list(progress_pattern.finditer(full_output_text))
+    if all_progress_matches:
+        # Get the last match (most recent progress update)
+        last_match = all_progress_matches[-1]
+        try:
+            current_track_progress = int(last_match.group(1))
+            logging.debug(f"[_calculate_playlist_progress] Found latest track progress: {current_track_progress}%")
+        except (ValueError, IndexError) as e:
+            logging.warning(f"[_calculate_playlist_progress] Error parsing latest progress value: {e}")
+    else:
+         logging.warning(f"[_calculate_playlist_progress] No 'InProgress' lines found.")
+
+    # 4. Calculate overall percentage
+    overall_percentage = 0.0
+    if total_tracks > 0:
+        # Calculate progress including the current track's contribution
+        # Use float division for precision
+        overall_percentage = ((completed_tracks + (current_track_progress / 100.0)) / total_tracks) * 100
+        # Ensure it doesn't exceed 100% due to potential timing issues or double counting
+        overall_percentage = min(overall_percentage, 100.0)
+        logging.debug(f"[_calculate_playlist_progress] Calculated overall percentage: {overall_percentage:.2f}%")
+
+    return {
+        'overall_progress_percent': round(overall_percentage, 2),
+        'completed_tracks': completed_tracks,
+        'total_tracks': total_tracks,
+        'current_track_progress': current_track_progress
+    }
+
+
+# Example modification to the /update_console_output endpoint
+# (Or create a new endpoint like /download_progress/<command_id>)
 @app.route('/update_console_output/<command_id>', methods=['GET'])
 def update_console_output(command_id):
-    """Route to update the interactive console with the current output of a command."""
+    """Route to update the interactive console with the current output and progress of a command."""
     with command_lock:
         command_info = active_downloads.get(command_id)
 
     if not command_info:
+        logging.info(f"[update_console_output] Command not found: {command_id}")
         return jsonify({'error': 'Command not found'}), 404
 
-    return jsonify({'output': command_info['output'], 'status': command_info['status']})
+    # Get the standard output and status
+    output = command_info.get('output', [])
+    status = command_info.get('status', 'unknown')
+
+    # Prepare base response data
+    response_data = {
+        'output': output,
+        'status': status
+    }
+
+    # --- Calculate and add progress for playlist downloads ---
+    if command_info.get('type') == 'playlist' and status in ['running', 'completed', 'error']:
+        logging.debug(f"[update_console_output] Calculating progress for playlist command: {command_id}")
+        progress_data = _calculate_playlist_progress(command_id, output)
+        # Add the calculated progress data to the response
+        response_data.update(progress_data)
+        logging.debug(f"[update_console_output] Progress data for {command_id}: {progress_data}")
+    else:
+        logging.debug(f"[update_console_output] Not a running playlist or type mismatch for command: {command_id}")
+
+    return jsonify(response_data)
 
 # Endpoint to send console input to the process
 @app.route('/send_console_input/<command_id>', methods=['POST'])
@@ -1800,12 +1965,15 @@ def search_combined_playlists():
         'results': all_results
     }), 200
 
+# --- Unified Endpoint (Modified to use helper) ---
+# (Assuming this function exists in your code as defined previously)
 @app.route('/api/download/playlist', methods=['POST'])
-def download_playlist_unified():
+def download_playlist_unified(): # Or whatever you named it
+    """Unified endpoint accepting source and playlist_id/playlist_url."""
     data = request.json
     source = data.get('source')
     playlist_id = data.get('playlist_id')
-    playlist_url = data.get('playlist_url', '')
+    playlist_url = data.get('playlist_url', '') # Accept optional full URL
 
     if not source or source not in ['spotify', 'youtube']:
         return jsonify({'status': 'error', 'message': 'Source must be "spotify" or "youtube"'}), 400
@@ -1813,15 +1981,163 @@ def download_playlist_unified():
     if not playlist_id and not playlist_url:
         return jsonify({'status': 'error', 'message': 'Either playlist_id or playlist_url is required'}), 400
 
-    # Construct URL if not provided
+    # Construct URL if not provided or if ID is given
     if not playlist_url:
         if source == 'spotify':
+            # Standard Spotify playlist URL format
             playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
         elif source == 'youtube':
+            # Standard YouTube playlist URL format
+            # Note: If playlist_id was a video ID from a playlist URL,
+            # this might need parsing. Assuming it's the playlist list ID.
             playlist_url = f"https://www.youtube.com/playlist?list={playlist_id}"
 
-    # Reuse existing /download_playlist logic
-    return download_playlist()
+    # --- Call the core processing function ---
+    response_data, status_code = _process_playlist_download(playlist_url)
+    return jsonify(response_data), status_code
+
+# ... (previous imports and code) ...
+
+@app.route('/api/spotify/playlist/<playlist_id>', methods=['GET'])
+def api_get_spotify_playlist_details(playlist_id):
+    """
+    API endpoint to fetch and return the title, and track details (name and primary artist) 
+    of a Spotify playlist.
+    
+    Args:
+        playlist_id (str): The Spotify ID of the playlist.
+
+    Returns:
+        JSON: A JSON object containing 'title' and 'tracks' (list of dicts with 'name' and 'artist') on success (200),
+              or an error message and appropriate status code (401, 404, 500).
+    """
+    logging.info(f"[api_get_spotify_playlist_details] Fetching details for playlist ID: {playlist_id}")
+    
+    # Get a valid Spotify token (user token if available, otherwise client credentials)
+    access_token = get_token()
+    if not access_token:
+        logging.error("[api_get_spotify_playlist_details] Could not authenticate with Spotify.")
+        return jsonify({'error': 'Could not authenticate with Spotify.'}), 401
+
+    headers = {'Authorization': f'Bearer {access_token}'}
+    
+    # --- 1. Fetch Playlist Title ---
+    playlist_details_url = f'https://api.spotify.com/v1/playlists/{playlist_id}'
+    try:
+        playlist_details_response = requests.get(playlist_details_url, headers=headers)
+        
+        if playlist_details_response.status_code == 200:
+            playlist_data = playlist_details_response.json()
+            playlist_title = playlist_data.get('name', f'Untitled Playlist ({playlist_id})')
+            logging.debug(f"[api_get_spotify_playlist_details] Playlist title: {playlist_title}")
+        elif playlist_details_response.status_code == 404:
+            logging.warning(f"[api_get_spotify_playlist_details] Playlist with ID {playlist_id} not found.")
+            return jsonify({'error': 'Playlist not found.'}), 404
+        else:
+            error_msg = f"Spotify API error ({playlist_details_response.status_code}) fetching playlist details: {playlist_details_response.text}"
+            logging.error(f"[api_get_spotify_playlist_details] {error_msg}")
+            return jsonify({'error': 'Failed to fetch playlist details from Spotify.', 'details': error_msg}), 500
+            
+    except requests.exceptions.RequestException as e:
+        logging.error(f"[api_get_spotify_playlist_details] Network error fetching playlist details: {e}")
+        return jsonify({'error': 'Network error occurred while fetching playlist details.'}), 500
+    except json.JSONDecodeError as e:
+        logging.error(f"[api_get_spotify_playlist_details] Error decoding JSON for playlist details: {e}")
+        return jsonify({'error': 'Error processing playlist details response from Spotify.'}), 500
+    except Exception as e:
+        logging.error(f"[api_get_spotify_playlist_details] Unexpected error fetching playlist details: {e}")
+        return jsonify({'error': 'An unexpected error occurred while fetching playlist details.'}), 500
+
+    # --- 2. Fetch Playlist Tracks ---
+    tracks_url = f'https://api.spotify.com/v1/playlists/{playlist_id}/tracks?limit=100' # Use limit=100 for efficiency
+    track_details = [] # List to store dictionaries with name and artist
+    
+    try:
+        while tracks_url:
+            tracks_response = requests.get(tracks_url, headers=headers)
+            
+            if tracks_response.status_code == 200:
+                tracks_data = tracks_response.json()
+                
+                # Extract track names and primary artists, handling potential missing data
+                items = tracks_data.get('items', [])
+                for item in items:
+                    track = item.get('track')
+                    if track: # Check if track object exists
+                        track_name = track.get('name', "Unknown Track")
+                        
+                        # Get the first artist's name if available
+                        artists = track.get('artists', [])
+                        primary_artist_name = "Unknown Artist"
+                        if artists and isinstance(artists, list) and 'name' in artists[0]:
+                            primary_artist_name = artists[0]['name']
+                            
+                        track_details.append({
+                            'name': track_name,
+                            'artist': primary_artist_name
+                        })
+                    else:
+                        # Handle items that aren't tracks (e.g., local files sometimes appear differently)
+                        logging.debug(f"[api_get_spotify_playlist_details] Found non-track item in playlist {playlist_id}.")
+                        # Appending a placeholder maintains list consistency
+                        track_details.append({
+                            'name': "Non-Track Item",
+                            'artist': "N/A"
+                        })
+                        
+                # Check if there are more pages of tracks
+                tracks_url = tracks_data.get('next') # This will be None if no more pages
+                logging.debug(f"[api_get_spotify_playlist_details] Fetched page. Next URL: {tracks_url is not None}")
+                
+            elif tracks_response.status_code == 404:
+                 # This should ideally not happen if the playlist exists, but handle it
+                 logging.warning(f"[api_get_spotify_playlist_details] Tracks endpoint returned 404 for playlist {playlist_id}.")
+                 return jsonify({'error': 'Playlist tracks not found.'}), 404
+            else:
+                error_msg = f"Spotify API error ({tracks_response.status_code}) fetching tracks: {tracks_response.text}"
+                logging.error(f"[api_get_spotify_playlist_details] {error_msg}")
+                # If we already have the title, we could return partial data or an error.
+                # Returning an error is generally cleaner if tracks fail.
+                return jsonify({
+                    'title': playlist_title, 
+                    'tracks': track_details, # Return tracks fetched so far
+                    'error': 'Failed to fetch all playlist tracks from Spotify.',
+                    'details': error_msg
+                }), 500 
+                
+    except requests.exceptions.RequestException as e:
+        logging.error(f"[api_get_spotify_playlist_details] Network error fetching tracks: {e}")
+        return jsonify({
+            'title': playlist_title, 
+            'tracks': track_details, # Return tracks fetched so far
+            'error': 'Network error occurred while fetching playlist tracks.',
+            'details': str(e)
+        }), 500
+    except json.JSONDecodeError as e:
+        logging.error(f"[api_get_spotify_playlist_details] Error decoding JSON for tracks: {e}")
+        return jsonify({
+            'title': playlist_title, 
+            'tracks': track_details,
+            'error': 'Error processing playlist tracks response from Spotify.',
+            'details': str(e)
+        }), 500
+    except Exception as e:
+        logging.error(f"[api_get_spotify_playlist_details] Unexpected error fetching tracks: {e}")
+        return jsonify({
+            'title': playlist_title, 
+            'tracks': track_details,
+            'error': 'An unexpected error occurred while fetching playlist tracks.',
+            'details': str(e)
+        }), 500
+
+    # --- 3. Return Success Response ---
+    logging.info(f"[api_get_spotify_playlist_details] Successfully fetched {len(track_details)} tracks for playlist '{playlist_title}'.")
+    return jsonify({
+        'title': playlist_title,
+        'tracks': track_details 
+    }), 200
+
+
 
 if __name__ == '__main__':
     # Generate sldl.conf on startup
