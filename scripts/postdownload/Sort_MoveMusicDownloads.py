@@ -229,7 +229,9 @@ def move_folder_contents(src, dst, extensions=None):
     """
     Move contents of src to dst, merging if dst already exists.
     If `extensions` is provided, only files with those extensions are moved.
+    Returns the number of newly added files.
     """
+    new_files_count = 0
     if not os.path.exists(dst):
         os.makedirs(dst)
 
@@ -238,17 +240,25 @@ def move_folder_contents(src, dst, extensions=None):
         dst_path = os.path.join(dst, item)
 
         if os.path.isdir(src_path):
-            # Recursively merge directories, passing the extensions filter
-            move_folder_contents(src_path, dst_path, extensions)
+            # Recursively merge directories and add to the count
+            new_files_count += move_folder_contents(src_path, dst_path, extensions)
         else:
+            # Check if the file is new before moving
+            is_new_file = not os.path.exists(dst_path)
+            
             # If extensions are specified, check the file extension
             if extensions:
                 file_ext = os.path.splitext(item)[1].lower()
                 if file_ext in extensions:
                     move_and_compare(src_path, dst_path)
+                    if is_new_file:
+                        new_files_count += 1
             else:
                 # If no extensions are specified, move the file
                 move_and_compare(src_path, dst_path)
+                if is_new_file:
+                    new_files_count += 1
+    return new_files_count
 
 # Function to process each artist folder
 def process_artist_folder(artist_folder):
@@ -422,80 +432,107 @@ def wait_for_library_scan_completion(api_base_url, headers, expected_song_count,
     logging.warning(f"Final song count was {final_song_count}, but expected {expected_song_count}.")
     return False
 
-def create_jellyfin_playlist(playlist_name, song_files, api_base_url, headers, user_id, main_music_library_id, max_retries=3):
-    """Create a Jellyfin playlist from a given list of song filenames with retry logic."""
-    logging.info(f"Attempting to create Jellyfin playlist for: {playlist_name}")
+def create_or_update_jellyfin_playlist(playlist_name, song_files, api_base_url, headers, user_id, main_music_library_id, max_retries=3):
+    """
+    Create a Jellyfin playlist or update it if it already exists with an exact name match.
+    """
+    logging.info(f"Attempting to create or update Jellyfin playlist for: {playlist_name}")
 
     if not song_files:
         logging.warning(f"No song files provided for playlist '{playlist_name}'.")
         return None
 
-    song_ids = []
+    # --- Find song IDs from the library ---
+    song_ids_to_add = []
     for attempt in range(max_retries + 1):
         if attempt > 0:
-            logging.info(f"Retry attempt {attempt}/{max_retries} for playlist '{playlist_name}'...")
-            time.sleep(10) # Wait before retrying
+            logging.info(f"Retry attempt {attempt}/{max_retries} to find songs for '{playlist_name}'...")
+            time.sleep(10)
 
-        # Get the Jellyfin audio library mapping (filename → item ID)
         filename_to_id = get_jellyfin_audio_library(api_base_url, headers, user_id, main_music_library_id)
-
         if not filename_to_id and attempt < max_retries:
             logging.warning("Could not load Jellyfin audio library. Will retry.")
             continue
-        
-        # Match songs by filename
-        song_ids = []
+
         found_songs = []
         not_found_songs = []
-
         for song_file in song_files:
             if song_file in filename_to_id:
-                song_id = filename_to_id[song_file]
-                song_ids.append(song_id)
+                song_ids_to_add.append(filename_to_id[song_file])
                 found_songs.append(song_file)
             else:
                 not_found_songs.append(song_file)
 
-        logging.info(f"Found {len(found_songs)}/{len(song_files)} songs in the library.")
+        logging.info(f"Found {len(found_songs)}/{len(song_files)} songs in the library for this download batch.")
         if not_found_songs:
-            logging.warning(f"Could not find: {', '.join(not_found_songs)}")
-
-        # If we found all songs, we can break early.
-        if not not_found_songs:
-            break
+            logging.warning(f"Could not find in library: {', '.join(not_found_songs)}")
         
-        # If we are on the last attempt, we proceed with what we have.
-        if attempt == max_retries:
+        if not not_found_songs or attempt == max_retries:
             break
 
-    if not song_ids:
-        logging.error(f"No songs found in Jellyfin for playlist '{playlist_name}' after {max_retries + 1} attempts. Playlist will not be created.")
+    if not song_ids_to_add:
+        logging.error(f"No new songs found in Jellyfin for playlist '{playlist_name}'. Aborting.")
         return None
 
-    # Create the playlist
+    # --- Check for existing playlist with an EXACT name match ---
+    existing_playlist_id = None
     try:
-        create_playlist_url = f"{api_base_url}/Playlists"
-        payload = {
-            "Name": playlist_name,
-            "UserId": user_id,
-            "Ids": song_ids
+        # Fetch all playlists for the user
+        search_url = f"{api_base_url}/Users/{user_id}/Items"
+        params = {
+            "Recursive": "true",
+            "IncludeItemTypes": "Playlist"
         }
-
-        response = requests.post(create_playlist_url, headers=headers, json=payload)
-
+        response = requests.get(search_url, headers=headers, params=params)
         if response.status_code == 200:
-            playlist_data = response.json()
-            playlist_id = playlist_data['Id']
-            logging.info(f"✓ Successfully created playlist '{playlist_name}' with {len(song_ids)} songs (ID: {playlist_id})")
-            if not_found_songs:
-                logging.warning(f"Note: {len(not_found_songs)} songs were not found in Jellyfin and were excluded from the playlist.")
-            return playlist_id
+            all_playlists = response.json().get('Items', [])
+            # Manually iterate and find an exact match
+            for playlist in all_playlists:
+                if playlist.get('Name') == playlist_name:
+                    existing_playlist_id = playlist['Id']
+                    logging.info(f"Found existing playlist '{playlist_name}' with ID: {existing_playlist_id} (Exact Match)")
+                    break  # Found it, no need to look further
         else:
-            logging.error(f"Failed to create playlist '{playlist_name}': {response.status_code} - {response.text}")
-            return None
-
+            logging.error(f"Failed to search for existing playlists: {response.status_code} - {response.text}")
     except Exception as e:
-        logging.error(f"Exception while creating playlist '{playlist_name}': {e}")
+        logging.error(f"Exception while searching for existing playlist: {e}")
+
+    # --- Update or Create Playlist ---
+    try:
+        if existing_playlist_id:
+            # Playlist exists, add new items to it
+            add_to_playlist_url = f"{api_base_url}/Playlists/{existing_playlist_id}/Items"
+            params = {
+                "Ids": ",".join(song_ids_to_add),
+                "UserId": user_id
+            }
+            response = requests.post(add_to_playlist_url, headers=headers, params=params)
+            if response.status_code < 300:
+                logging.info(f"✓ Successfully added {len(song_ids_to_add)} new songs to existing playlist '{playlist_name}'.")
+                return existing_playlist_id
+            else:
+                logging.error(f"Failed to add songs to playlist '{playlist_name}': {response.status_code} - {response.text}")
+                return None
+        else:
+            # Playlist does not exist, create it
+            logging.info(f"No existing playlist found with the exact name '{playlist_name}'. Creating a new one.")
+            create_playlist_url = f"{api_base_url}/Playlists"
+            payload = {
+                "Name": playlist_name,
+                "UserId": user_id,
+                "Ids": song_ids_to_add
+            }
+            response = requests.post(create_playlist_url, headers=headers, json=payload)
+            if response.status_code == 200:
+                playlist_data = response.json()
+                playlist_id = playlist_data['Id']
+                logging.info(f"✓ Successfully created new playlist '{playlist_name}' with {len(song_ids_to_add)} songs (ID: {playlist_id})")
+                return playlist_id
+            else:
+                logging.error(f"Failed to create new playlist '{playlist_name}': {response.status_code} - {response.text}")
+                return None
+    except Exception as e:
+        logging.error(f"Exception during playlist creation/update for '{playlist_name}': {e}")
         return None
 
 def move_playlist_folders():
@@ -524,7 +561,7 @@ def move_playlist_folders():
     logging.info(f"Checking for playlist folders in: {download_path_clean}, found {len(files_in_download_path)} items")    
 
     total_files_moved = 0
-    playlists_to_create = []  # List of tuples: (playlist_name, music_files, original_item_path)
+    playlists_to_process = []  # List of tuples: (playlist_name, music_files, original_item_path)
 
     # --- First Pass: Move files and collect data ---
     for item in files_in_download_path:
@@ -548,17 +585,16 @@ def move_playlist_folders():
                 if os.path.exists(destination_folder):
                     logging.warning(f"Playlist folder {destination_folder} already exists. Merging music files.")
                 
-                # Move only music files, creating the destination folder if needed.
-                move_folder_contents(item_path, destination_folder, music_extensions)
+                newly_moved_count = move_folder_contents(item_path, destination_folder, music_extensions)
 
-                logging.info(f"Moved {len(music_files)} music files to: {destination_folder}")
-                total_files_moved += len(music_files)
-                playlists_to_create.append((playlist_name, music_files, item_path))
+                logging.info(f"Moved {newly_moved_count} new music files to: {destination_folder}")
+                total_files_moved += newly_moved_count
+                playlists_to_process.append((playlist_name, music_files, item_path))
 
             except Exception as e:
                 logging.error(f"Error moving music files from {item_path}: {e}")
 
-    # --- Second Pass: Scan and create playlists if files were moved ---
+    # --- Second Pass: Scan and create/update playlists if files were moved ---
     if total_files_moved > 0:
         logging.info(f"Moved a total of {total_files_moved} files. Triggering a single library scan.")
         
@@ -567,13 +603,13 @@ def move_playlist_folders():
             scan_completed = wait_for_library_scan_completion(api_base_url, HEADERS, expected_song_count)
 
             if scan_completed:
-                logging.info("Library scan completed. Creating playlists...")
-                for playlist_name, music_files, original_item_path in playlists_to_create:
-                    playlist_id = create_jellyfin_playlist(
+                logging.info("Library scan completed. Processing playlists...")
+                for playlist_name, music_files, original_item_path in playlists_to_process:
+                    playlist_id = create_or_update_jellyfin_playlist(
                         playlist_name, music_files, api_base_url, HEADERS, user_id, main_music_library_id
                     )
                     if playlist_id:
-                        logging.info(f"Successfully created Jellyfin playlist '{playlist_name}' with ID: {playlist_id}")
+                        logging.info(f"Successfully processed Jellyfin playlist '{playlist_name}'")
                         if os.path.exists(original_item_path):
                             try:
                                 shutil.rmtree(original_item_path, ignore_errors=True)
@@ -581,11 +617,11 @@ def move_playlist_folders():
                             except Exception as e:
                                 logging.error(f"Failed to remove leftover folder {original_item_path}: {e}")
                     else:
-                        logging.error(f"Failed to create Jellyfin playlist for '{playlist_name}' after successful scan.")
+                        logging.error(f"Failed to process Jellyfin playlist for '{playlist_name}' after successful scan.")
             else:
-                logging.error("Library scan did not complete as expected. Skipping playlist creation.")
+                logging.error("Library scan did not complete as expected. Skipping playlist processing.")
         else:
-            logging.error("Failed to trigger library scan. Skipping playlist creation.")
+            logging.error("Failed to trigger library scan. Skipping playlist processing.")
     else:
         logging.info("No new playlist files to move.")
                     
