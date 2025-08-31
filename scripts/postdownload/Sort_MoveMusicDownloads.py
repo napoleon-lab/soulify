@@ -9,6 +9,8 @@ from mutagen.mp4 import MP4
 import configparser
 import sys
 import time
+import hashlib
+import json
 
 # Setup logging
 script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -26,8 +28,15 @@ logging.basicConfig(
 config_dir = os.path.abspath(os.path.join(script_dir, "../../"))
 config_path = os.path.join(config_dir, 'config.ini')
 
+# Global variables for Navidrome config
+navidrome_url = None
+navidrome_user = None
+navidrome_password = None
+
 # Function to read configurations from config.ini
 def load_config():
+    global navidrome_url, navidrome_user, navidrome_password
+    
     if not os.path.exists(config_path):
         logging.error(f"config.ini not found at {config_path}. Please ensure it exists.")
         raise FileNotFoundError(f"config.ini not found at {config_path}")
@@ -44,6 +53,16 @@ def load_config():
     unknown_albums_dir = config.get('Paths', 'unknown_albums_dir').strip()
     download_path = music_download_folder  # Formerly from sldl.conf
 
+    # [Navidrome] - Optional section
+    try:
+        navidrome_url = config.get('Navidrome', 'url').strip()
+        navidrome_user = config.get('Navidrome', 'user').strip()
+        navidrome_password = config.get('Navidrome', 'password').strip()
+        logging.info(f"Navidrome config loaded: URL={navidrome_url}, User={navidrome_user}")
+    except (configparser.NoSectionError, configparser.NoOptionError) as e:
+        logging.warning(f"Navidrome config not found or incomplete: {e}")
+        navidrome_url = navidrome_user = navidrome_password = None
+
     logging.debug(f"Config loaded: source_route={source_route}, destination_root={destination_root}, "
                   f"new_artists_dir={new_artists_dir}, music_download_folder={music_download_folder}, "
                   f"unknown_albums_dir={unknown_albums_dir}")
@@ -57,6 +76,72 @@ def load_config():
 
 # Audio file extensions to check
 audio_extensions = {'.mp3', '.flac', '.m4a', '.mp4', '.aac', '.wav', '.ogg', '.wma', '.alac', '.aiff', '.opus'}
+
+# Function to get Navidrome authentication token
+def get_navidrome_token():
+    """Get authentication token from Navidrome API"""
+    if not all([navidrome_url, navidrome_user, navidrome_password]):
+        logging.warning("Navidrome credentials not configured, skipping API calls")
+        return None, None
+    
+    try:
+        login_url = f"{navidrome_url}/auth/login"
+        login_data = {
+            "username": navidrome_user,
+            "password": navidrome_password
+        }
+        
+        response = requests.post(login_url, json=login_data, timeout=10)
+        response.raise_for_status()
+        
+        auth_data = response.json()
+        token = auth_data.get('subsonicToken')
+        salt = auth_data.get('subsonicSalt')
+        
+        if token and salt:
+            logging.info("Successfully obtained Navidrome authentication token")
+            return token, salt
+        else:
+            logging.error("Failed to get token/salt from Navidrome response")
+            return None, None
+            
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Failed to authenticate with Navidrome: {e}")
+        return None, None
+    except json.JSONDecodeError as e:
+        logging.error(f"Failed to parse Navidrome auth response: {e}")
+        return None, None
+
+def trigger_navidrome_scan():
+    """Trigger a full scan on Navidrome after playlist creation"""
+    if not all([navidrome_url, navidrome_user, navidrome_password]):
+        logging.info("Navidrome not configured, skipping scan trigger")
+        return
+    
+    token, salt = get_navidrome_token()
+    if not token or not salt:
+        logging.error("Could not get Navidrome token, skipping scan")
+        return
+    
+    try:
+        scan_url = f"{navidrome_url}/rest/startScan"
+        params = {
+            'u': navidrome_user,
+            't': token,
+            's': salt,
+            'f': 'json',
+            'v': '1.8.0',
+            'c': 'NavidromeUI',
+            'fullScan': 'true'
+        }
+        
+        response = requests.get(scan_url, params=params, timeout=30)
+        response.raise_for_status()
+        
+        logging.info("✓ Successfully triggered Navidrome full scan")
+        
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Failed to trigger Navidrome scan: {e}")
 
 # Function to set permissions
 def set_permissions(path):
@@ -289,19 +374,44 @@ def cleanup_empty_directories(directory):
                 except Exception as e:
                     logging.error(f"Error deleting empty directory {dir_path}: {e}")
 
-def create_m3u8_playlist(playlist_folder_path, playlist_name, song_files):
+def create_m3u8_playlist(playlist_folder_path, playlist_name):
     """
-    Creates an .m3u8 playlist file in the destination folder.
+    Creates an .m3u8 playlist file in the destination folder using actual files in the folder.
+    This function will replace the existing playlist if it already exists.
     """
+    music_extensions = {'.mp3', '.flac', '.m4a', '.wav', '.ogg', '.aac', '.wma', '.webm', '.opus', '.mka', '.mp4'}
     m3u8_file_path = os.path.join(playlist_folder_path, f"{playlist_name}.m3u8")
-    logging.info(f"Creating .m3u8 playlist file at: {m3u8_file_path}")
+    
+    # Get all music files from the destination folder (not from original source)
+    song_files = []
+    for root, dirs, files in os.walk(playlist_folder_path):
+        for file in files:
+            file_ext = os.path.splitext(file)[1].lower()
+            if file_ext in music_extensions:
+                # Use relative path from the playlist folder
+                relative_path = os.path.relpath(os.path.join(root, file), playlist_folder_path)
+                song_files.append(relative_path)
+    
+    if not song_files:
+        logging.warning(f"No music files found in {playlist_folder_path} for playlist creation")
+        return
+    
+    logging.info(f"Creating .m3u8 playlist file at: {m3u8_file_path} with {len(song_files)} tracks")
+    
     try:
+        # Remove existing playlist file if it exists (to replace it)
+        if os.path.exists(m3u8_file_path):
+            os.remove(m3u8_file_path)
+            logging.info(f"Removed existing playlist file: {m3u8_file_path}")
+        
         with open(m3u8_file_path, 'w', encoding='utf-8') as f:
             f.write("#EXTM3U\n")
             # Sort files alphabetically for consistent playlist order
             for song_file in sorted(song_files):
                 f.write(f"{song_file}\n")
-        logging.info(f"✓ Successfully created playlist file: {m3u8_file_path}")
+        
+        logging.info(f"✓ Successfully created playlist file: {m3u8_file_path} with {len(song_files)} tracks")
+        
     except Exception as e:
         logging.error(f"Failed to create .m3u8 playlist file for '{playlist_name}': {e}")
 
@@ -351,7 +461,7 @@ def move_playlist_folders():
 
                 logging.info(f"Moved {newly_moved_count} new music files to: {destination_folder}")
                 total_files_moved += newly_moved_count
-                playlists_to_process.append((playlist_name, music_files, item_path, destination_folder))
+                playlists_to_process.append((playlist_name, destination_folder))
 
             except Exception as e:
                 logging.error(f"Error moving music files from {item_path}: {e}")
@@ -360,21 +470,30 @@ def move_playlist_folders():
         elif not playlist_files and music_files:
             logging.info(f"Found folder '{item}' with music files but no playlist files. Skipping.")
 
-    # --- Second Pass: Create playlists if files were moved ---
-    if total_files_moved > 0:
-        logging.info(f"Moved a total of {total_files_moved} files. Processing playlists...")
-        for playlist_name, music_files, original_item_path, destination_folder in playlists_to_process:
-            # Create the .m3u8 file
-            create_m3u8_playlist(destination_folder, playlist_name, music_files)
-
+    # --- Second Pass: Create playlists and cleanup ---
+    playlists_created = 0
+    if playlists_to_process:
+        logging.info(f"Processing {len(playlists_to_process)} playlists...")
+        for playlist_name, destination_folder in playlists_to_process:
+            # Create the .m3u8 file using files in destination folder
+            create_m3u8_playlist(destination_folder, playlist_name)
+            playlists_created += 1
+            
+            # Clean up original folder if it still exists
+            original_item_path = os.path.join(download_path_clean, playlist_name)
             if os.path.exists(original_item_path):
                 try:
                     shutil.rmtree(original_item_path, ignore_errors=True)
                     logging.info(f"✓ Cleaned up leftover downloaded folder: {original_item_path}")
                 except Exception as e:
                     logging.error(f"Failed to remove leftover folder {original_item_path}: {e}")
+    
+    if playlists_created > 0:
+        logging.info(f"Successfully processed {playlists_created} playlists")
+        # Trigger Navidrome scan after creating playlists
+        trigger_navidrome_scan()
     else:
-        logging.info("No new playlist files to move")
+        logging.info("No playlists to process")
                     
 # Main function to iterate through all artist folders in the source root
 def main():
@@ -382,45 +501,3 @@ def main():
 
     # Move playlist folders
     move_playlist_folders()
-
-    # Delete specific files (.cue, .log, .m3u) in relevant directories before any other processing
-    # delete_specific_files_in_all_subdirectories(source_route)
-    # delete_specific_files_in_all_subdirectories(music_download_folder)
-    # delete_specific_files_in_all_subdirectories(unknown_albums_dir)
-
-    # Make sure the new artist directory exists
-    # if not os.path.exists(new_artists_dir):
-    #     os.makedirs(new_artists_dir)
-    #     logging.info(f"Created new artists directory: {new_artists_dir}")
-    # else:
-    #     logging.info(f"New artists directory already exists: {new_artists_dir}")
-
-    # # Log all items in source_route
-    # items = os.listdir(source_route)
-    # logging.info(f"Items in source_route: {items}")
-
-    # # Process each artist folder in source_route
-    # for item in items:
-    #     artist_folder = os.path.join(source_route, item)
-    #     logging.info(f"Processing item: {item}")
-
-    #     if os.path.isdir(artist_folder):
-    #         logging.info(f"Found artist folder: {artist_folder}, starting process_artist_folder")
-    #         process_artist_folder(artist_folder)
-    #     else:
-    #         logging.info(f"Skipping non-directory item: {artist_folder}")
-
-    # # After processing artist folders, move folders with audio files to unknown album folder
-    # move_folders_with_audio_to_unknown()
-
-    # # Run the empty directory cleanup after processing everything else at source
-    # cleanup_empty_directories(source_route)
-
-    # # Run the empty directory cleanup after processing everything else at download folder
-    # cleanup_empty_directories(music_download_folder)
-    
-    # # Run the empty directory cleanup after processing everything else at unknown album folder
-    # cleanup_empty_directories(unknown_albums_dir)
-
-if __name__ == "__main__":
-    main()

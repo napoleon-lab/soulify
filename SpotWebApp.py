@@ -33,6 +33,7 @@ import stat
 from collections import deque
 
 from werkzeug import serving
+from scripts.postdownload import Sort_MoveMusicDownloads
 
 parent_log_request = serving.WSGIRequestHandler.log_request
 
@@ -121,9 +122,12 @@ def run_post_processing(command_id):
         result = subprocess.run(['python3', run_all_script], capture_output=True, text=True)
         log_post_processing_output(result, 'RunAll.py')
     elif update_library and not update_with_mb:
-        logging.info(f"[{command_id}] Running Sort_MoveMusicDownloads.py script...")
-        result = subprocess.run(['python3', sort_move_music_script], capture_output=True, text=True)
-        log_post_processing_output(result, 'Sort_MoveMusicDownloads.py')
+        logging.info(f"[{command_id}] Running Sort_MoveMusicDownloads.py script (in-process)...")
+        try:
+            Sort_MoveMusicDownloads.main()  # Run directly in-process
+            logging.info(f"[{command_id}] Sort_MoveMusicDownloads.py completed in-process.")
+        except Exception as e:
+            logging.error(f"[{command_id}] Error running Sort_MoveMusicDownloads.py in-process: {e}")
     elif update_with_mb and not update_library:
         logging.info(f"[{command_id}] Running UpdatewithMB.sh script...")
         result = subprocess.run(['bash', update_with_mb_script], capture_output=True, text=True)
