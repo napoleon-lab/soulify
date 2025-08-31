@@ -2,3 +2,5 @@ flask
 requests
 mutagen
 pexpect
+pexpect
+
