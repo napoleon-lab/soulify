@@ -126,32 +126,24 @@
         </div>
 
         <div class="form-group">
-            <label>Update Library and Refresh Jellyfin - Looks for an artist folder in your existing Library to match and import download to:</label>
-            <input type="radio" name="UpdateLibraryMetadataAndRefreshJellyfin" value="true" {% if soulify.UpdateLibraryMetadataAndRefreshJellyfin %}checked{% endif %}> True
-            <input type="radio" name="UpdateLibraryMetadataAndRefreshJellyfin" value="false" {% if not soulify.UpdateLibraryMetadataAndRefreshJellyfin %}checked{% endif %}> False
+            <label>Update Library and Refresh Navidrome - Looks for an artist folder in your existing Library to match and import download to:</label>
+                <input type="radio" name="UpdateLibraryMetadataAndRefreshJellyfin" value="true" {% if soulify.UpdateLibraryMetadataAndRefreshJellyfin %}checked{% endif %}> True
+                <input type="radio" name="UpdateLibraryMetadataAndRefreshJellyfin" value="false" {% if not soulify.UpdateLibraryMetadataAndRefreshJellyfin %}checked{% endif %}> False
+            </div>
         </div>
-		
-		
-		        <!-- pdscript.conf settings -->
-        <h2>Post Download Script Settings</h2>
-        <div class="form-group">
-            <label>Root of Exising Music Library:</label>
-            <input type="text" name="destination_root" value="{{ pdscript['destination_root'] }}">
-        </div>
-
-        <div class="form-group">
-            <label>Holding Directory for New Artists:</label>
-            <input type="text" name="new_artists_dir" value="{{ pdscript['new_artists_dir'] }}">
-        </div>
-
-        <div class="form-group">
-            <label>JellyfinHost IP and Port:</label>
-            <input type="text" name="API_BASE_URL" value="{{ pdscript['API_BASE_URL'] }}">
-        </div>
-
-        <div class="form-group">
-            <label>Jellyfin API Key:</label>
-            <input type="text" name="API_AUTH_TOKEN" value="{{ pdscript['API_AUTH_TOKEN'] }}">
+        <div class="card">
+            <div class="card-header">
+                Post Download Script Settings
+            </div>
+            <div class="card-body">
+                <label>Destination Root:</label>
+                <input type="text" name="destination_root" value="{{ pdscript.destination_root }}">
+                <label>New Artists Directory:</label>
+                <input type="text" name="new_artists_dir" value="{{ pdscript.new_artists_dir }}">
+                <label>Navidrome URL:</label>
+                <input type="text" name="api_base_url" value="{{ pdscript.api_base_url }}">
+                <label>Navidrome API Key:</label>
+                <input type="text" name="api_auth_token" value="{{ pdscript.api_auth_token }}">
         </div>
         <input type="submit" value="Save Settings">
     </form>

@@ -170,23 +170,19 @@
         });
     }
 
-    // Function to check in Jellyfin for the artist
-    function checkInJellyfin(artistName) {
-        artistName = cleanString(artistName); // Clean the artist name
-
-        window.location.href = `/jellyfin_check_artist?artist=${encodeURIComponent(artistName)}`;
+        // Function to check in Navidrome for the artist
+    function checkInNavidrome(artistName) {
+        // Redirect to the Navidrome artist search page
+        window.location.href = `/navidrome_artist_search?artist=${encodeURIComponent(artistName)}`;
     }
 </script>
-
-</head>
-<body>
-    {% include 'nav.html' %}
-    <div class="artist-header">
-        <img src="{{ artist['images'][0]['url'] if artist['images'] else 'https://cdn.icon-icons.com/icons2/1504/PNG/512/unknown_103657.png' }}" alt="{{ artist['name'] }}">
-        <h1>{{ artist['name'] }} - Albums</h1>
-        <button onclick="downloadArtist('{{ artist['name'] | escape }}')">Queue Entire Artist Download</button>
-        <button onclick="checkInJellyfin('{{ artist['name'] | escape }}')">Check in Jellyfin</button>
+<div class="container">
+    <!-- ... existing content ... -->
+    <div class="artist-actions">
+        <button onclick="checkInNavidrome('{{ artist['name'] | escape }}')">Check in Navidrome</button>
     </div>
+    <!-- ... existing content ... -->
+</div>
 
     {% for album_group, albums in albums.items() %}
         {% if albums %}

@@ -998,23 +998,29 @@ def submit_artist():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/scan_jellyfin_library', methods=['POST'])
-def scan_jellyfin_library():
-    api_base_url = get_setting('Jellyfin', 'api_base_url')
-    main_music_library_id = get_setting('Jellyfin', 'main_music_library_id')
-    api_auth_token = get_setting('Jellyfin', 'api_auth_token')
+@app.route('/scan_navidrome_library', methods=['POST'])
+def scan_navidrome_library():
+    """Triggers a library scan in Navidrome."""
+    navidrome_url = get_setting('Navidrome', 'url')
+    navidrome_user = get_setting('Navidrome', 'user')
+    navidrome_pass = get_setting('Navidrome', 'password')
     
-    url = f"{api_base_url}/Items/{main_music_library_id}/Refresh?Recursive=true&ImageRefreshMode=Default&MetadataRefreshMode=Default&ReplaceAllImages=false&ReplaceAllMetadata=false"
-    headers = {
-        'Authorization': f"MediaBrowser Token={api_auth_token}",
-        'Accept': 'application/json'
-    }
+    # Construct the Subsonic API URL for starting a scan
+    url = f"{navidrome_url}/rest/startScan"
+    params = {'f': 'json', 'v': '1.16.1'}
+    
+    try:
+        response = requests.get(url, auth=(navidrome_user, navidrome_pass), params=params, timeout=10)
+        response.raise_for_status()  # Raise an exception for bad status codes
+        
+        scan_status = response.json().get("subsonic-response", {}).get("scanStatus", {})
+        if scan_status.get("scanning") == True:
+            return jsonify({'message': 'Navidrome Library Scan Initiated Successfully'}), 200
+        else:
+            return jsonify({'message': 'Failed to initiate Navidrome scan, server did not confirm scanning.', 'details': scan_status}), 500
 
-    response = requests.post(url, headers=headers)
-    if response.status_code == 204:
-        return jsonify({'message': 'Jellyfin Library Scan Initiated Successfully'}), 204
-    else:
-        return jsonify({'message': f'Failed to initiate scan. Status Code: {response.status_code}'}), 500
+    except requests.exceptions.RequestException as e:
+        return jsonify({'message': f'Failed to connect to Navidrome: {str(e)}'}), 500
 
 @app.route('/get_artists_by_genre')
 def get_artists_by_genre():
@@ -1036,129 +1042,103 @@ def get_artists_by_genre():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/jellyfin_check_artist', methods=['GET'])
-def jellyfin_check_artist():
+@app.route('/navidrome_artist_search', methods=['GET'])
+def navidrome_artist_search():
+    """
+    Searches for an artist in Navidrome and displays their albums.
+    This replaces jellyfin_check_artist.
+    """
     artist_name = request.args.get('artist')
     if not artist_name:
         return "Artist name is required.", 400
 
-    # Load Jellyfin API settings from config
-    base_url = get_setting('Jellyfin', 'api_base_url')
-    token = get_setting('Jellyfin', 'api_auth_token')
-    userId = get_setting('Jellyfin', 'user_id')
+    # Load Navidrome API settings from config
+    url = get_setting('Navidrome', 'url')
+    user = get_setting('Navidrome', 'user')
+    password = get_setting('Navidrome', 'password')
+    auth = (user, password)
+    params = {'f': 'json', 'v': '1.16.1'}
 
-    # Search for the artist in Jellyfin
-    search_url = f"{base_url}/Artists?searchTerm={artist_name}&Limit=100&Fields=PrimaryImageAspectRatio,CanDelete,MediaSourceCount&Recursive=true&EnableTotalRecordCount=false&ImageTypeLimit=1&IncludePeople=false&IncludeMedia=false&IncludeGenres=false&IncludeStudios=false&IncludeArtists=true&userId={userId}"
-    headers = {
-        'Authorization': f'MediaBrowser Token={token}',
-        'accept': 'application/json',
-        'Content-Type': 'application/json'
-    }
+    try:
+        # 1. Get all artists to find the ID for the one we're searching for
+        artists_response = requests.get(f"{url}/rest/getArtists", auth=auth, params=params)
+        artists_response.raise_for_status()
+        
+        all_artists = []
+        index = artists_response.json().get("subsonic-response", {}).get("artists", {}).get("index", [])
+        for i in index:
+            all_artists.extend(i.get("artist", []))
 
-    # Send request to Jellyfin
-    artist_response = requests.get(search_url, headers=headers)
+        found_artist = next((a for a in all_artists if a['name'].lower() == artist_name.lower()), None)
 
-    if artist_response.status_code != 200:
-        return f"Error fetching artist details from Jellyfin: {artist_response.text}", artist_response.status_code
+        if not found_artist:
+            return "No artist found in Navidrome.", 404
 
-    artist_data = artist_response.json().get('Items', [])
-    if not artist_data:
-        return "No artist found in Jellyfin.", 404
+        artist_id = found_artist['id']
 
-    # Assume best match is the first one
-    artist_id = artist_data[0].get('Id')
+        # 2. Get the artist's albums using their ID
+        artist_details_params = {**params, 'id': artist_id}
+        albums_response = requests.get(f"{url}/rest/getArtist", auth=auth, params=artist_details_params)
+        albums_response.raise_for_status()
+        
+        albums_data = albums_response.json().get("subsonic-response", {}).get("artist", {}).get("album", [])
+        
+        # Ensure albums_data is a list
+        if isinstance(albums_data, dict):
+            albums_data = [albums_data]
 
-    # Get albums for the artist
-    albums_url = f"{base_url}/Users/271ccedecfc548bdadc29720845d8e8d/Items?SortOrder=Descending,Descending,Ascending&IncludeItemTypes=MusicAlbum&Recursive=true&Fields=ParentId,PrimaryImageAspectRatio,ParentId,PrimaryImageAspectRatio&StartIndex=0&CollapseBoxSetItems=false&AlbumArtistIds={artist_id}&SortBy=PremiereDate,ProductionYear,Sortname"
-    
-    albums_response = requests.get(albums_url, headers=headers)
-    
-    if albums_response.status_code != 200:
-        return f"Error fetching albums from Jellyfin: {albums_response.text}", albums_response.status_code
+        return render_template('navidrome_artist_albums.html', artist=found_artist, albums=albums_data, navidrome_base_url=url)
 
-    albums_data = albums_response.json().get('Items', [])
-
-    # Prepare album information to render the frontend
-    album_info = []
-    for album in albums_data:
-        album_id = album['Id']
-        image_tag = album['ImageTags'].get('Primary', None)
-
-        album_info.append({
-            'name': album['Name'],
-            'id': album_id,
-            'image_tag': image_tag,
-            'link': f"/jellyfin_album_tracks?album_id={album_id}"  # Link to the album tracks
-        })
-
-    return render_template('jellyfin_artist_albums.html', artist=artist_data[0], albums=album_info, jellyfin_base_url=base_url)
+    except requests.exceptions.RequestException as e:
+        return f"Error communicating with Navidrome: {str(e)}", 500
 
 
-# New endpoint to serve Jellyfin images via the backend to avoid CORS issues
-@app.route('/jellyfin_image/<album_id>/<image_tag>', methods=['GET'])
-def jellyfin_image(album_id, image_tag):
-    # Load Jellyfin API settings from config
-    base_url = get_setting('Jellyfin', 'api_base_url')
-    token = get_setting('Jellyfin', 'api_auth_token')
+@app.route('/navidrome_cover_art/<cover_art_id>', methods=['GET'])
+def navidrome_cover_art(cover_art_id):
+    """
+    Fetches and serves a cover art image from Navidrome.
+    This replaces jellyfin_image.
+    """
+    url = get_setting('Navidrome', 'url')
+    user = get_setting('Navidrome', 'user')
+    password = get_setting('Navidrome', 'password')
+    auth = (user, password)
+    params = {'f': 'json', 'v': '1.16.1', 'id': cover_art_id}
 
-    # Construct the image URL
-    image_url = f"{base_url}/Items/{album_id}/Images/Primary?fillHeight=271&fillWidth=271&quality=96&tag={image_tag}"
-    headers = {
-        'Authorization': f'MediaBrowser Token={token}'
-    }
-
-    # Fetch the image from Jellyfin
-    image_response = requests.get(image_url, headers=headers, stream=True)
-
-    if image_response.status_code != 200:
-        return f"Error fetching image from Jellyfin: {image_response.text}", image_response.status_code
-
-    # Return the image content with appropriate headers
-    return Response(image_response.content, content_type=image_response.headers['Content-Type'])
+    try:
+        image_response = requests.get(f"{url}/rest/getCoverArt", auth=auth, params=params, stream=True)
+        image_response.raise_for_status()
+        return Response(image_response.content, content_type=image_response.headers['Content-Type'])
+    except requests.exceptions.RequestException as e:
+        return f"Error fetching image from Navidrome: {str(e)}", 500
 
 
-@app.route('/jellyfinalbumtracks/<string:album_id>', methods=['GET'])
-def jellyfin_album_tracks(album_id):
-    # Load Jellyfin API settings from config
-    base_url = get_setting('Jellyfin', 'api_base_url')
-    token = get_setting('Jellyfin', 'api_auth_token')
+@app.route('/navidrome_album_tracks/<string:album_id>', methods=['GET'])
+def navidrome_album_tracks(album_id):
+    """
+    Fetches and displays the tracks for a specific album from Navidrome.
+    This replaces jellyfin_album_tracks.
+    """
+    url = get_setting('Navidrome', 'url')
+    user = get_setting('Navidrome', 'user')
+    password = get_setting('Navidrome', 'password')
+    auth = (user, password)
+    params = {'f': 'json', 'v': '1.16.1', 'id': album_id}
 
-    headers = {
-        'Authorization': f'MediaBrowser Token={token}',
-        'accept': 'application/json',
-        'Content-Type': 'application/json'
-    }
+    try:
+        album_response = requests.get(f"{url}/rest/getAlbum", auth=auth, params=params)
+        album_response.raise_for_status()
+        
+        album_data = album_response.json().get("subsonic-response", {}).get("album", {})
+        tracks_data = album_data.get("song", [])
 
-    # Step 1: Get the album details
-    album_url = f"{base_url}/Users/271ccedecfc548bdadc29720845d8e8d/Items/{album_id}"
-    album_response = requests.get(album_url, headers=headers)
-    
-    if album_response.status_code != 200:
-        return f"Error fetching album details from Jellyfin: {album_response.text}", album_response.status_code
+        # Ensure tracks_data is a list
+        if isinstance(tracks_data, dict):
+            tracks_data = [tracks_data]
 
-    album_data = album_response.json()
-
-    # Step 2: Fetch the tracks for the album
-    tracks_url = f"{base_url}/Users/271ccedecfc548bdadc29720845d8e8d/Items?ParentId={album_id}&Fields=ItemCounts,PrimaryImageAspectRatio,CanDelete,MediaSourceCount&SortBy=ParentIndexNumber,IndexNumber,SortName"
-    tracks_response = requests.get(tracks_url, headers=headers)
-
-    if tracks_response.status_code != 200:
-        return f"Error fetching album tracks from Jellyfin: {tracks_response.text}", tracks_response.status_code
-
-    tracks_data = tracks_response.json().get('Items', [])
-
-    # Prepare the track information for rendering
-    track_info = []
-    for track in tracks_data:
-        track_info.append({
-            'name': track['Name'],
-            'id': track['Id'],
-            'artist': ', '.join(track.get('Artists', [])),
-            'runtime': track.get('RunTimeTicks', 0) / 10000000  # Convert ticks to seconds if available
-        })
-
-    # Step 3: Render the template with the complete album and track information
-    return render_template('jellyfin_album_tracks.html', album=album_data, tracks=track_info)
+        return render_template('navidrome_album_tracks.html', album=album_data, tracks=tracks_data)
+    except requests.exceptions.RequestException as e:
+        return f"Error fetching album tracks from Navidrome: {str(e)}", 500
 
 
 # Define a helper function to safely access and modify active_downloads
@@ -1488,10 +1468,10 @@ def _calculate_playlist_progress(command_id, output_lines):
     # logging.warning(f"[_calculate_playlist_progress] output_lines type: {type(output_lines).__name__}")
     # logging.warning(f"[_calculate_playlist_progress] output_lines demo: {output_lines[:5]}... (total {len(output_lines)} lines)")
     # logging.warning(f"[_calculate_playlist_progress] Join demo: {"/////".join(output_lines[:5])}")
-    logging.info(f"[_calculate_playlist_progress] Calculating progress for command_id: {command_id}")
+    # logging.info(f"[_calculate_playlist_progress] Calculating progress for command_id: {command_id}")
 
     if not output_lines:
-        logging.warning(f"[_calculate_playlist_progress] No output lines for command_id: {command_id}")
+        # logging.warning(f"[_calculate_playlist_progress] No output lines for command_id: {command_id}")
         return {
             'overall_progress_percent': None,
             'completed_tracks': None,
@@ -1516,7 +1496,7 @@ def _calculate_playlist_progress(command_id, output_lines):
         total_tracks = int(total_tracks_match.group(1))
         logging.debug(f"[_calculate_playlist_progress] Found total tracks: {total_tracks}")
     else:
-        logging.warning(f"[_calculate_playlist_progress] Could not find total tracks for command_id: {command_id} in full output.")
+        # logging.warning(f"[_calculate_playlist_progress] Could not find total tracks for command_id: {command_id} in full output.")
         # Couldn't find total tracks, cannot calculate
         return {
             'overall_progress_percent': None,
@@ -1531,7 +1511,7 @@ def _calculate_playlist_progress(command_id, output_lines):
     success_pattern = re.compile(r"Succeeded:([^%]*?)\(100\s*%\)") # Non-greedy, capture group 1
 
     found_successes = success_pattern.findall(full_output_text)
-    logging.debug(f"[_calculate_playlist_progress] Found {len(found_successes)} potential success markers.")
+    # logging.debug(f"[_calculate_playlist_progress] Found {len(found_successes)} potential success markers.")
 
     for identifier_part in found_successes:
         # The identifier_part might contain the filename or user/share details.
@@ -1543,9 +1523,9 @@ def _calculate_playlist_progress(command_id, output_lines):
         if clean_identifier and clean_identifier not in processed_tracks_identifiers:
              completed_tracks += 1
              processed_tracks_identifiers.add(clean_identifier)
-             logging.warning(f"[_calculate_playlist_progress] Counted completed track: '{clean_identifier}'")
+            #  logging.warning(f"[_calculate_playlist_progress] Counted completed track: '{clean_identifier}'")
 
-    logging.debug(f"[_calculate_playlist_progress] Total unique completed tracks counted: {completed_tracks}")
+    # logging.debug(f"[_calculate_playlist_progress] Total unique completed tracks counted: {completed_tracks}")
 
     # 3. Find latest current track progress
     # Look for the most recent line indicating the progress of *any* track
@@ -1562,7 +1542,8 @@ def _calculate_playlist_progress(command_id, output_lines):
         except (ValueError, IndexError) as e:
             logging.warning(f"[_calculate_playlist_progress] Error parsing latest progress value: {e}")
     else:
-         logging.warning(f"[_calculate_playlist_progress] No 'InProgress' lines found.")
+        pass
+        #  logging.warning(f"[_calculate_playlist_progress] No 'InProgress' lines found.")
 
     # 4. Calculate overall percentage
     overall_percentage = 0.0
@@ -1572,7 +1553,7 @@ def _calculate_playlist_progress(command_id, output_lines):
         overall_percentage = ((completed_tracks + (current_track_progress / 100.0)) / total_tracks) * 100
         # Ensure it doesn't exceed 100% due to potential timing issues or double counting
         overall_percentage = min(overall_percentage, 100.0)
-        logging.debug(f"[_calculate_playlist_progress] Calculated overall percentage: {overall_percentage:.2f}%")
+        # logging.debug(f"[_calculate_playlist_progress] Calculated overall percentage: {overall_percentage:.2f}%")
 
     return {
         'overall_progress_percent': round(overall_percentage, 2),

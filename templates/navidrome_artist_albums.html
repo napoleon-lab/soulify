@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ artist['name'] }} - Navidrome Albums</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        body {
+            background-color: #f4f4f4;
+            padding-top: 20px;
+        }
+        .container {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .album-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 20px;
+        }
+        .album-item {
+            text-align: center;
+        }
+        .album-item img {
+            width: 100%;
+            height: auto;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+        .album-item a {
+            color: #333;
+            font-weight: bold;
+            text-decoration: none;
+        }
+        .album-item a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    {% include 'nav.html' %}
+    <div class="container">
+        <h1>{{ artist['name'] }} - Albums in Navidrome</h1>
+        <hr>
+        {% if albums %}
+            <div class="album-grid">
+                {% for album in albums %}
+                    <div class="album-item">
+                        {% if album.coverArt %}
+                            <img src="/navidrome_cover_art/{{ album.coverArt }}" alt="{{ album.name }}">
+                        {% else %}
+                            <img src="https://via.placeholder.com/150" alt="No cover art">
+                        {% endif %}
+                        <a href="/navidrome_album_tracks/{{ album.id }}">{{ album.name }}</a>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p>No albums found for this artist.</p>
+        {% endif %}
+    </div>
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

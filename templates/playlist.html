@@ -109,9 +109,9 @@
 
     <script>
         // Function to handle playlist download queuing
-        function downloadPlaylist(playlistId) {
+        function downloadPlaylist(playlistUrl) {
             const url = '/download_playlist';
-            const data = { playlistId: playlistId };
+            const data = { playlistUrl: playlistUrl }; // Now expects full URL
 
             fetch(url, {
                 method: 'POST',
@@ -162,8 +162,8 @@
                 <a href="/playlisttracks/{{ playlist['id'] }}?playlist_name={{ playlist['name'] }}">{{ playlist['name'] }}</a>
             </div>
             <div class="download">
-                <!-- Queue Playlist Download Button -->
-                <button onclick="downloadPlaylist('{{ playlist['id'] }}')">Queue Download</button>
+                <!-- Queue Playlist Download Button - Pass the full Spotify URL -->
+                <button onclick="downloadPlaylist(`https://open.spotify.com/playlist/{{ playlist['id'] }}`)">Queue Download</button>
             </div>
         </div>
         {% endfor %}
@@ -173,10 +173,9 @@
         document.getElementById('download-form').addEventListener('submit', function(event) {
             event.preventDefault();
             const playlistUrl = document.getElementById('playlist-url').value;
-            const playlistId = playlistUrl.split('/').pop().split('?')[0];
-            downloadPlaylist(playlistId);
+            // Pass the full URL directly instead of extracting ID
+            downloadPlaylist(playlistUrl);
         });
     </script>
 </body>
 </html>
-

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ album.name }} - Navidrome Album Tracks</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        body {
+            background-color: #f4f4f4;
+            padding-top: 20px;
+        }
+        .container {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .album-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .album-header img {
+            width: 150px;
+            height: 150px;
+            margin-right: 20px;
+            border-radius: 5px;
+        }
+        .track-list .list-group-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+    </style>
+</head>
+<body>
+    {% include 'nav.html' %}
+    <div class="container">
+        <div class="album-header">
+            {% if album.coverArt %}
+                <img src="/navidrome_cover_art/{{ album.coverArt }}" alt="{{ album.name }}">
+            {% else %}
+                <img src="https://via.placeholder.com/150" alt="No cover art">
+            {% endif %}
+            <div>
+                <h1>{{ album.name }}</h1>
+                <p class="text-muted">{{ album.artist }} ({{ album.year }})</p>
+            </div>
+        </div>
+        <hr>
+        <div class="track-list">
+            <ul class="list-group">
+                {% for track in tracks %}
+                    <li class="list-group-item">
+                        <span>{{ track.track }}. {{ track.title }}</span>
+                        <span>{{ '%02d:%02d' % (track.duration // 60, track.duration % 60) }}</span>
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

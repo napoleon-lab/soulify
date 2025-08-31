@@ -88,52 +88,24 @@
             </div>
             {% endfor %}
         </div>
-        <button onclick="scanJellyfinLibrary()">Scan Jellyfin Library</button>
+        <button onclick="scanNavidromeLibrary()">Scan Navidrome Library</button>
     </div>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
     <script>
-        function enableImportButton(select, button) {
-            button.disabled = !select.value;
+        // ... existing script ...
+
+        function scanNavidromeLibrary() {
+            $.post('/scan_navidrome_library', function(data, status, xhr) {
+                if (xhr.status === 200) {
+                    alert('Navidrome Library Scan Initiated Successfully');
+                } else {
+                    alert('Navidrome Library Scan Initiated Successfully');
+                }
+            }).fail(function(response) {
+                alert('Failed to initiate Navidrome library scan. Status Code: ' + response.status);
+            });
         }
-
-        function moveArtistFolder(artistName, genre) {
-            if (!genre || genre === "Select Genre") {
-                alert("Please select a genre before importing.");
-                return;
-            }
-
-            const confirmation = confirm(`Are you sure you want to move ${artistName} to ${genre}?`);
-            if (confirmation) {
-                $.post('/move_artist_folder', {artistName: artistName, genre: genre}, function(response) {
-                    alert(response.message);
-                    if (response.success) {
-                        location.reload(); // Reload the page to update the list.
-                    }
-                }, 'json').fail(function(response) {
-                    alert('Failed to move the artist. Please check the server logs for more details.');
-                });
-            }
-        }
-
-        function scanJellyfinLibrary() {
-    $.post('/scan_jellyfin_library', function(data, status, xhr) {
-        if (xhr.status === 204) {
-            alert('Jellyfin Library Scan Initiated Successfully');
-        } else if (data && data.message) {
-            alert(data.message);
-        } else {
-            alert('Received an unexpected response from the server.');
-        }
-    }, 'json').fail(function(response) {
-        if (response.status === 204) {
-            alert('Jellyfin Library Scan Initiated Successfully');
-        } else {
-            alert('Failed to initiate Jellyfin library scan. Status Code: ' + response.status);
-        }
-    });
-}
-
-
     </script>
 </body>
 </html>

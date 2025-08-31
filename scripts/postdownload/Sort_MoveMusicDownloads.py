@@ -44,34 +44,19 @@ def load_config():
     unknown_albums_dir = config.get('Paths', 'unknown_albums_dir').strip()
     download_path = music_download_folder  # Formerly from sldl.conf
 
-    # [Jellyfin]
-    api_base_url = config.get('Jellyfin', 'api_base_url').strip()
-    api_auth_token = config.get('Jellyfin', 'api_auth_token').strip()
-    user_id = config.get('Jellyfin', 'user_id').strip()
-    main_music_library_id = config.get('Jellyfin', 'main_music_library_id').strip()
-
     logging.debug(f"Config loaded: source_route={source_route}, destination_root={destination_root}, "
                   f"new_artists_dir={new_artists_dir}, music_download_folder={music_download_folder}, "
-                  f"unknown_albums_dir={unknown_albums_dir}, api_base_url={api_base_url}")
+                  f"unknown_albums_dir={unknown_albums_dir}")
 
     return (source_route, destination_root, new_artists_dir, music_download_folder, 
-            unknown_albums_dir, api_base_url, api_auth_token, user_id, 
-            playlist_dir, download_path, main_music_library_id)
+            unknown_albums_dir, playlist_dir, download_path)
 
 # Load configuration variables
 (source_route, destination_root, new_artists_dir, music_download_folder, 
- unknown_albums_dir, api_base_url, api_auth_token, user_id, 
- playlist_dir, download_path, main_music_library_id) = load_config()
+ unknown_albums_dir, playlist_dir, download_path) = load_config()
 
 # Audio file extensions to check
 audio_extensions = {'.mp3', '.flac', '.m4a', '.mp4', '.aac', '.wav', '.ogg', '.wma', '.alac', '.aiff', '.opus'}
-
-# API headers
-HEADERS = {
-    'Authorization': f'MediaBrowser Token={api_auth_token}',
-    'accept': 'application/json',
-    'Content-Type': 'application/json'
-}
 
 # Function to set permissions
 def set_permissions(path):
@@ -194,36 +179,6 @@ def update_metadata(file_path, genre, album_artist):
         logging.error(f"Error updating metadata for {file_path}: {e}")
         return False
 
-# Function to make GET request and fetch artist details
-def fetch_artist_info(artist_name):
-    logging.debug(f"Fetching artist info for {artist_name}")
-    try:
-        url = f"{api_base_url}/Artists/{artist_name}"
-        response = requests.get(url, headers=HEADERS)
-        if response.status_code == 200:
-            artist_info = response.json()
-            logging.info(f"Successfully fetched artist info for {artist_name}")
-            return artist_info
-        else:
-            logging.error(f"Failed to fetch artist info for {artist_name}: Status {response.status_code}")
-            return None
-    except Exception as e:
-        logging.error(f"Error fetching artist info for {artist_name}: {e}")
-        return None
-
-# Function to refresh artist metadata using the artist ID
-def refresh_artist_metadata(artist_id):
-    logging.debug(f"Refreshing metadata for artist ID {artist_id}")
-    try:
-        url = f"{api_base_url}/Items/{artist_id}/Refresh?Recursive=true&ImageRefreshMode=Default&MetadataRefreshMode=Default&ReplaceAllImages=false&ReplaceAllMetadata=false"
-        response = requests.post(url, headers=HEADERS)
-        if response.status_code == 204:
-            logging.info(f"Successfully refreshed metadata for artist ID {artist_id}")
-        else:
-            logging.error(f"Failed to refresh metadata for artist ID {artist_id}: Status {response.status_code}")
-    except Exception as e:
-        logging.error(f"Error refreshing metadata for artist ID {artist_id}: {e}")
-
 # Function to move contents of one folder to another, merging if necessary
 def move_folder_contents(src, dst, extensions=None):
     """
@@ -292,11 +247,6 @@ def process_artist_folder(artist_folder):
                     # Update metadata for supported formats
                     update_metadata(dst_file, genre_folder, artist_name)
 
-            # Make API calls to fetch artist info and refresh metadata
-            artist_info = fetch_artist_info(artist_name)
-            if artist_info and 'Id' in artist_info:
-                refresh_artist_metadata(artist_info['Id'])
-
             break
 
     if not match_found:
@@ -339,208 +289,25 @@ def cleanup_empty_directories(directory):
                 except Exception as e:
                     logging.error(f"Error deleting empty directory {dir_path}: {e}")
 
-def get_jellyfin_item_counts(api_base_url, headers):
-    """Get item counts from Jellyfin."""
-    url = f"{api_base_url}/Items/counts"
-    try:
-        logging.debug(f"Requesting item counts from URL: {url}")
-        logging.debug(f"Using headers: {headers}")
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            logging.error(f"Failed to get item counts: {response.status_code} - {response.text}")
-            return None
-    except Exception as e:
-        logging.error(f"Exception while getting item counts: {e}")
-        return None
-
-def get_jellyfin_audio_library(api_base_url, headers, user_id, main_music_library_id):
-    """Get all audio items from Jellyfin with their file paths"""
-    logging.info("Fetching audio library from Jellyfin...")
-    
-    try:
-        # Get all audio items with their file paths
-        url = f"{api_base_url}/Users/{user_id}/Items"
-        params = {
-            "IncludeItemTypes": "Audio",
-            "Recursive": "true",
-            "Fields": "Path",  # Include the file path
-            "Limit": 50000  # High limit to get all songs
-        }
-        
-        response = requests.get(url, headers=headers, params=params)
-        
-        if response.status_code == 200:
-            items = response.json().get('Items', [])
-            
-            # Create a mapping of filename -> item ID
-            filename_to_id = {}
-            for item in items:
-                if 'Path' in item:
-                    filename = os.path.basename(item['Path'])
-                    filename_to_id[filename] = item['Id']
-            
-            logging.info(f"Loaded {len(filename_to_id)} audio files from Jellyfin")
-            return filename_to_id
-            
-        else:
-            logging.error(f"Failed to fetch audio library: {response.status_code} - {response.text}")
-            return {}
-            
-    except Exception as e:
-        logging.error(f"Exception while fetching audio library: {e}")
-        return {}
-
-def trigger_library_scan(api_base_url, headers, main_music_library_id):
-    """Trigger a Jellyfin library scan"""
-    url = f"{api_base_url}/Items/{main_music_library_id}/Refresh?Recursive=true&ImageRefreshMode=Default&MetadataRefreshMode=Default&ReplaceAllImages=false&ReplaceAllMetadata=false"
-    
-    try:
-        response = requests.post(url, headers=headers)
-        if response.status_code < 300:
-            logging.info('Jellyfin Library Scan triggered successfully')
-            return True
-        else:
-            logging.error(f"Failed to trigger library scan: {response.status_code} - {response.text}")
-            return False
-    except Exception as e:
-        logging.error(f"Exception while triggering library scan: {e}")
-        return False
-
-def wait_for_library_scan_completion(api_base_url, headers, expected_song_count, max_wait_time=300, check_interval=10):
-    """Wait for library scan to complete by polling the song count."""
-    logging.info(f"Waiting for Jellyfin song count to reach at least {expected_song_count}...")
-    
-    start_time = time.time()
-    while time.time() - start_time < max_wait_time:
-        counts = get_jellyfin_item_counts(api_base_url, headers)
-        if counts and 'SongCount' in counts:
-            current_song_count = counts['SongCount']
-            logging.info(f"Current song count: {current_song_count} / {expected_song_count}")
-            if current_song_count >= expected_song_count:
-                logging.info("Expected song count reached. Library scan appears to be complete.")
-                return True
-        else:
-            logging.warning("Could not retrieve current song count from Jellyfin.")
-            
-        time.sleep(check_interval)
-    
-    logging.warning(f"Timed out waiting for library scan after {max_wait_time} seconds.")
-    final_counts = get_jellyfin_item_counts(api_base_url, headers)
-    final_song_count = final_counts.get('SongCount', 'N/A') if final_counts else 'N/A'
-    logging.warning(f"Final song count was {final_song_count}, but expected {expected_song_count}.")
-    return False
-
-def create_or_update_jellyfin_playlist(playlist_name, song_files, api_base_url, headers, user_id, main_music_library_id, max_retries=3):
+def create_m3u8_playlist(playlist_folder_path, playlist_name, song_files):
     """
-    Create a Jellyfin playlist or update it if it already exists with an exact name match.
+    Creates an .m3u8 playlist file in the destination folder.
     """
-    logging.info(f"Attempting to create or update Jellyfin playlist for: {playlist_name}")
-
-    if not song_files:
-        logging.warning(f"No song files provided for playlist '{playlist_name}'.")
-        return None
-
-    # --- Find song IDs from the library ---
-    song_ids_to_add = []
-    for attempt in range(max_retries + 1):
-        if attempt > 0:
-            logging.info(f"Retry attempt {attempt}/{max_retries} to find songs for '{playlist_name}'...")
-            time.sleep(10)
-
-        filename_to_id = get_jellyfin_audio_library(api_base_url, headers, user_id, main_music_library_id)
-        if not filename_to_id and attempt < max_retries:
-            logging.warning("Could not load Jellyfin audio library. Will retry.")
-            continue
-
-        found_songs = []
-        not_found_songs = []
-        for song_file in song_files:
-            if song_file in filename_to_id:
-                song_ids_to_add.append(filename_to_id[song_file])
-                found_songs.append(song_file)
-            else:
-                not_found_songs.append(song_file)
-
-        logging.info(f"Found {len(found_songs)}/{len(song_files)} songs in the library for this download batch.")
-        if not_found_songs:
-            logging.warning(f"Could not find in library: {', '.join(not_found_songs)}")
-        
-        if not not_found_songs or attempt == max_retries:
-            break
-
-    if not song_ids_to_add:
-        logging.error(f"No new songs found in Jellyfin for playlist '{playlist_name}'. Aborting.")
-        return None
-
-    # --- Check for existing playlist with an EXACT name match ---
-    existing_playlist_id = None
+    m3u8_file_path = os.path.join(playlist_folder_path, f"{playlist_name}.m3u8")
+    logging.info(f"Creating .m3u8 playlist file at: {m3u8_file_path}")
     try:
-        # Fetch all playlists for the user
-        search_url = f"{api_base_url}/Users/{user_id}/Items"
-        params = {
-            "Recursive": "true",
-            "IncludeItemTypes": "Playlist"
-        }
-        response = requests.get(search_url, headers=headers, params=params)
-        if response.status_code == 200:
-            all_playlists = response.json().get('Items', [])
-            # Manually iterate and find an exact match
-            for playlist in all_playlists:
-                if playlist.get('Name') == playlist_name:
-                    existing_playlist_id = playlist['Id']
-                    logging.info(f"Found existing playlist '{playlist_name}' with ID: {existing_playlist_id} (Exact Match)")
-                    break  # Found it, no need to look further
-        else:
-            logging.error(f"Failed to search for existing playlists: {response.status_code} - {response.text}")
+        with open(m3u8_file_path, 'w', encoding='utf-8') as f:
+            f.write("#EXTM3U\n")
+            # Sort files alphabetically for consistent playlist order
+            for song_file in sorted(song_files):
+                f.write(f"{song_file}\n")
+        logging.info(f"✓ Successfully created playlist file: {m3u8_file_path}")
     except Exception as e:
-        logging.error(f"Exception while searching for existing playlist: {e}")
-
-    # --- Update or Create Playlist ---
-    try:
-        if existing_playlist_id:
-            # Playlist exists, add new items to it
-            add_to_playlist_url = f"{api_base_url}/Playlists/{existing_playlist_id}/Items"
-            params = {
-                "Ids": ",".join(song_ids_to_add),
-                "UserId": user_id
-            }
-            response = requests.post(add_to_playlist_url, headers=headers, params=params)
-            if response.status_code < 300:
-                logging.info(f"✓ Successfully added {len(song_ids_to_add)} new songs to existing playlist '{playlist_name}'.")
-                return existing_playlist_id
-            else:
-                logging.error(f"Failed to add songs to playlist '{playlist_name}': {response.status_code} - {response.text}")
-                return None
-        else:
-            # Playlist does not exist, create it
-            logging.info(f"No existing playlist found with the exact name '{playlist_name}'. Creating a new one.")
-            create_playlist_url = f"{api_base_url}/Playlists"
-            payload = {
-                "Name": playlist_name,
-                "UserId": user_id,
-                "Ids": song_ids_to_add
-            }
-            response = requests.post(create_playlist_url, headers=headers, json=payload)
-            if response.status_code == 200:
-                playlist_data = response.json()
-                playlist_id = playlist_data['Id']
-                logging.info(f"✓ Successfully created new playlist '{playlist_name}' with {len(song_ids_to_add)} songs (ID: {playlist_id})")
-                return playlist_id
-            else:
-                logging.error(f"Failed to create new playlist '{playlist_name}': {response.status_code} - {response.text}")
-                return None
-    except Exception as e:
-        logging.error(f"Exception during playlist creation/update for '{playlist_name}': {e}")
-        return None
+        logging.error(f"Failed to create .m3u8 playlist file for '{playlist_name}': {e}")
 
 def move_playlist_folders():
-    music_extensions = {
-        '.mp3', '.flac', '.m4a', '.wav',
-        '.ogg', '.aac', '.wma',
-        '.webm', '.opus', '.mka'
-    }
+    music_extensions = {'.mp3', '.flac', '.m4a', '.wav', '.ogg', '.aac', '.wma', '.webm', '.opus', '.mka'}
+    playlist_extensions = {'.m3u', '.m3u8'}
 
     download_path_clean = str(download_path).strip('"').strip("'").rstrip('/')
     logging.info(f"Cleaned download_path: {repr(download_path_clean)}")
@@ -549,19 +316,11 @@ def move_playlist_folders():
         logging.error(f"Download path does not exist: {download_path_clean}")
         return
 
-    # Get initial song count
-    initial_counts = get_jellyfin_item_counts(api_base_url, HEADERS)
-    if not initial_counts:
-        logging.error("Could not get initial item counts from Jellyfin. Aborting playlist processing.")
-        return
-    initial_song_count = initial_counts.get('SongCount', 0)
-    logging.info(f"Initial song count in Jellyfin: {initial_song_count}")
-
     files_in_download_path = os.listdir(download_path_clean)
     logging.info(f"Checking for playlist folders in: {download_path_clean}, found {len(files_in_download_path)} items")    
 
     total_files_moved = 0
-    playlists_to_process = []  # List of tuples: (playlist_name, music_files, original_item_path)
+    playlists_to_process = []
 
     # --- First Pass: Move files and collect data ---
     for item in files_in_download_path:
@@ -571,15 +330,18 @@ def move_playlist_folders():
 
         try:
             all_files = os.listdir(item_path)
+            # Check if folder contains playlist files
+            playlist_files = [f for f in all_files if os.path.splitext(f)[1].lower() in playlist_extensions]
             music_files = [f for f in all_files if os.path.splitext(f)[1].lower() in music_extensions]
         except Exception as e:
             logging.error(f"Error reading directory {item_path}: {e}")
             continue
 
-        if music_files:
+        # Only process folders that contain playlist files
+        if playlist_files and music_files:
             playlist_name = item
             destination_folder = os.path.join(playlist_dir, playlist_name)
-            logging.info(f"Found playlist '{playlist_name}' with {len(music_files)} songs.")
+            logging.info(f"Found playlist folder '{playlist_name}' with {len(music_files)} songs and {len(playlist_files)} playlist files.")
 
             try:
                 if os.path.exists(destination_folder):
@@ -589,41 +351,30 @@ def move_playlist_folders():
 
                 logging.info(f"Moved {newly_moved_count} new music files to: {destination_folder}")
                 total_files_moved += newly_moved_count
-                playlists_to_process.append((playlist_name, music_files, item_path))
+                playlists_to_process.append((playlist_name, music_files, item_path, destination_folder))
 
             except Exception as e:
                 logging.error(f"Error moving music files from {item_path}: {e}")
+        elif playlist_files and not music_files:
+            logging.info(f"Found playlist folder '{item}' with only playlist files, no music files. Skipping.")
+        elif not playlist_files and music_files:
+            logging.info(f"Found folder '{item}' with music files but no playlist files. Skipping.")
 
-    # --- Second Pass: Scan and create/update playlists if files were moved ---
+    # --- Second Pass: Create playlists if files were moved ---
     if total_files_moved > 0:
-        logging.info(f"Moved a total of {total_files_moved} files. Triggering a single library scan.")
-        
-        if trigger_library_scan(api_base_url, HEADERS, main_music_library_id):
-            expected_song_count = initial_song_count + total_files_moved
-            scan_completed = wait_for_library_scan_completion(api_base_url, HEADERS, expected_song_count)
+        logging.info(f"Moved a total of {total_files_moved} files. Processing playlists...")
+        for playlist_name, music_files, original_item_path, destination_folder in playlists_to_process:
+            # Create the .m3u8 file
+            create_m3u8_playlist(destination_folder, playlist_name, music_files)
 
-            if scan_completed:
-                logging.info("Library scan completed. Processing playlists...")
-                for playlist_name, music_files, original_item_path in playlists_to_process:
-                    playlist_id = create_or_update_jellyfin_playlist(
-                        playlist_name, music_files, api_base_url, HEADERS, user_id, main_music_library_id
-                    )
-                    if playlist_id:
-                        logging.info(f"Successfully processed Jellyfin playlist '{playlist_name}'")
-                        if os.path.exists(original_item_path):
-                            try:
-                                shutil.rmtree(original_item_path, ignore_errors=True)
-                                logging.info(f"✓ Cleaned up leftover downloaded folder: {original_item_path}")
-                            except Exception as e:
-                                logging.error(f"Failed to remove leftover folder {original_item_path}: {e}")
-                    else:
-                        logging.error(f"Failed to process Jellyfin playlist for '{playlist_name}' after successful scan.")
-            else:
-                logging.error("Library scan did not complete as expected. Skipping playlist processing.")
-        else:
-            logging.error("Failed to trigger library scan. Skipping playlist processing.")
+            if os.path.exists(original_item_path):
+                try:
+                    shutil.rmtree(original_item_path, ignore_errors=True)
+                    logging.info(f"✓ Cleaned up leftover downloaded folder: {original_item_path}")
+                except Exception as e:
+                    logging.error(f"Failed to remove leftover folder {original_item_path}: {e}")
     else:
-        logging.info("No new playlist files to move.")
+        logging.info("No new playlist files to move")
                     
 # Main function to iterate through all artist folders in the source root
 def main():
@@ -632,49 +383,44 @@ def main():
     # Move playlist folders
     move_playlist_folders()
 
-    return
-
     # Delete specific files (.cue, .log, .m3u) in relevant directories before any other processing
-    delete_specific_files_in_all_subdirectories(source_route)
-    delete_specific_files_in_all_subdirectories(music_download_folder)
-    delete_specific_files_in_all_subdirectories(unknown_albums_dir)
+    # delete_specific_files_in_all_subdirectories(source_route)
+    # delete_specific_files_in_all_subdirectories(music_download_folder)
+    # delete_specific_files_in_all_subdirectories(unknown_albums_dir)
 
     # Make sure the new artist directory exists
-    if not os.path.exists(new_artists_dir):
-        os.makedirs(new_artists_dir)
-        logging.info(f"Created new artists directory: {new_artists_dir}")
-    else:
-        logging.info(f"New artists directory already exists: {new_artists_dir}")
+    # if not os.path.exists(new_artists_dir):
+    #     os.makedirs(new_artists_dir)
+    #     logging.info(f"Created new artists directory: {new_artists_dir}")
+    # else:
+    #     logging.info(f"New artists directory already exists: {new_artists_dir}")
 
-    # Log all items in source_route
-    items = os.listdir(source_route)
-    logging.info(f"Items in source_route: {items}")
+    # # Log all items in source_route
+    # items = os.listdir(source_route)
+    # logging.info(f"Items in source_route: {items}")
 
-    # Process each artist folder in source_route
-    for item in items:
-        artist_folder = os.path.join(source_route, item)
-        logging.info(f"Processing item: {item}")
+    # # Process each artist folder in source_route
+    # for item in items:
+    #     artist_folder = os.path.join(source_route, item)
+    #     logging.info(f"Processing item: {item}")
 
-        if os.path.isdir(artist_folder):
-            logging.info(f"Found artist folder: {artist_folder}, starting process_artist_folder")
-            process_artist_folder(artist_folder)
-        else:
-            logging.info(f"Skipping non-directory item: {artist_folder}")
+    #     if os.path.isdir(artist_folder):
+    #         logging.info(f"Found artist folder: {artist_folder}, starting process_artist_folder")
+    #         process_artist_folder(artist_folder)
+    #     else:
+    #         logging.info(f"Skipping non-directory item: {artist_folder}")
 
-    # After processing artist folders, move folders with audio files to unknown album folder
-    move_folders_with_audio_to_unknown()
+    # # After processing artist folders, move folders with audio files to unknown album folder
+    # move_folders_with_audio_to_unknown()
 
-    # Move playlist folders
-    # move_playlist_folders()
+    # # Run the empty directory cleanup after processing everything else at source
+    # cleanup_empty_directories(source_route)
 
-    # Run the empty directory cleanup after processing everything else at source
-    cleanup_empty_directories(source_route)
-
-    # Run the empty directory cleanup after processing everything else at download folder
-    cleanup_empty_directories(music_download_folder)
+    # # Run the empty directory cleanup after processing everything else at download folder
+    # cleanup_empty_directories(music_download_folder)
     
-    # Run the empty directory cleanup after processing everything else at unknown album folder
-    cleanup_empty_directories(unknown_albums_dir)
+    # # Run the empty directory cleanup after processing everything else at unknown album folder
+    # cleanup_empty_directories(unknown_albums_dir)
 
 if __name__ == "__main__":
     main()

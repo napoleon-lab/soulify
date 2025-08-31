@@ -5,8 +5,10 @@ music
 jellyfin
 *.crt
 *.key
+config.ini
 config.ini.private
 certs
+sldl.conf
 
 .*
 
